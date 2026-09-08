@@ -1,5 +1,5 @@
 {
-  "name": "shekarestan_app",
+  "name": "shekarestan-app",
   "compatibility_date": "2026-08-01",
   "main": "worker.js",
   "assets": {
