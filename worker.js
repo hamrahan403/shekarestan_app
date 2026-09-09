@@ -571,9 +571,6 @@ async function handleFsProxy(request, env) {
 // آپلود جزوه/عکس/فیلم به تلگرام (بدون تغییر نسبت به قبل)
 // =====================================================================
 async function handleTelegramUpload(request, env) {
-    const session = await getSession(request, env);
-    if (!session) return jsonRes({ error: 'برای آپلود فایل باید وارد حساب کاربری شوید' }, 401);
-
     const BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
     const CHAT_ID = env.TELEGRAM_CHAT_ID;
 
