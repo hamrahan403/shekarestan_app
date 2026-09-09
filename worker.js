@@ -624,8 +624,23 @@ async function handleTelegramFileProxy(request, env) {
     const tgRes = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`);
     if (!tgRes.ok) return new Response('دریافت فایل از تلگرام ناموفق بود', { status: 502 });
 
+    // پسوند رو از مسیر خودِ تلگرام استخراج کن (معمولاً پسوند اصلی فایل حفظ می‌شود)
+    const ext = (path.split('.').pop() || '').toLowerCase();
+    const MIME_MAP = {
+        pdf: 'application/pdf',
+        doc: 'application/msword',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ppt: 'application/vnd.ms-powerpoint',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        mp4: 'video/mp4', mp3: 'audio/mpeg'
+    };
+    const contentType = MIME_MAP[ext] || tgRes.headers.get('Content-Type') || 'application/octet-stream';
+    const fileName = path.split('/').pop() || ('file' + (ext ? '.' + ext : ''));
+
     const headers = new Headers();
-    headers.set('Content-Type', tgRes.headers.get('Content-Type') || 'application/octet-stream');
+    headers.set('Content-Type', contentType);
+    headers.set('Content-Disposition', `inline; filename="${fileName}"`);
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
     return new Response(tgRes.body, { status: 200, headers });
 }
