@@ -29,6 +29,7 @@ export default {
             else if (p === '/api/auth/login' && request.method === 'POST') response = await handleLogin(request, env);
             else if (p === '/api/auth/google/start' && request.method === 'GET') response = await handleGoogleStart(request, env);
             else if (p === '/api/auth/google/callback' && request.method === 'GET') response = await handleGoogleCallback(request, env);
+            else if (p === '/api/auth/google/verify-token' && request.method === 'POST') response = await handleGoogleVerifyToken(request, env);
             else if (p === '/api/auth/session-status' && request.method === 'POST') response = await handleSessionStatus(request, env);
             else if (p === '/api/fs' && request.method === 'POST') response = await handleFsProxy(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
@@ -503,6 +504,20 @@ async function checkFsPermission(env, session, op, collection, docId, data) {
     return !!session;
 }
 
+// ارسال نوتیفیکیشن Push به اپ اندروید/iOS از طریق سرویس Expo (رایگان، نیازی به فایربیس FCM جدا نیست)
+async function sendExpoPush(pushToken, title, body, data) {
+    if (!pushToken) return;
+    try {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ to: pushToken, title, body, data: data || {}, sound: 'default' })
+        });
+    } catch (e) {
+        // خطای ارسال نوتیفیکیشن نباید باعث خراب‌شدن پاسخ اصلی به کلاینت بشه
+    }
+}
+
 async function handleFsProxy(request, env) {
     const session = await getSession(request, env);
     const { op, collection, docId, data, orderByField, orderByDir } = await request.json();
@@ -541,6 +556,19 @@ async function handleFsProxy(request, env) {
         if (op === 'update') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
             await firestoreUpdate(env, `${collection}/${docId}`, data || {});
+
+            // نوتیفیکیشن: وقتی ادمین وضعیت عضویت یک کاربر رو تغییر می‌ده (تایید/رد)
+            if (collection === 'users' && data && (data.status === 'approved' || data.status === 'rejected')) {
+                const userDoc = await firestoreGet(env, `users/${docId}`);
+                if (userDoc && userDoc.pushToken) {
+                    const title = data.status === 'approved' ? 'خوش اومدی! 🎉' : 'وضعیت عضویت';
+                    const body = data.status === 'approved'
+                        ? 'عضویتت تایید شد، حالا می‌تونی از همه‌ی امکانات استفاده کنی.'
+                        : 'متاسفانه عضویتت این‌بار تایید نشد.';
+                    await sendExpoPush(userDoc.pushToken, title, body, { type: 'membership', status: data.status });
+                }
+            }
+
             return jsonRes({ ok: true });
         }
         if (op === 'delete') {
@@ -550,6 +578,24 @@ async function handleFsProxy(request, env) {
         }
         if (op === 'add') {
             const result = await firestoreAdd(env, collection, data || {});
+
+            // نوتیفیکیشن: پیام جدید در ترد گفتگوی ویراستار - فقط وقتی فرستنده صاحب ترد نباشه
+            const fsParts = String(collection).split('/').filter(Boolean);
+            if (fsParts[0] === 'editors' && fsParts.length >= 4 && fsParts[2] === 'threads') {
+                const threadUid = fsParts[3];
+                if (data && data.senderUid && data.senderUid !== threadUid) {
+                    const userDoc = await firestoreGet(env, `users/${threadUid}`);
+                    if (userDoc && userDoc.pushToken) {
+                        await sendExpoPush(
+                            userDoc.pushToken,
+                            data.senderName || 'ویراستار',
+                            data.text || 'پیام جدید داری',
+                            { type: 'editorReply', editorId: fsParts[1] }
+                        );
+                    }
+                }
+            }
+
             return jsonRes({ item: result });
         }
         if (op === 'findByEmail') {
@@ -606,26 +652,39 @@ async function handleTelegramUpload(request, env) {
     const fileInfoJson = await fileInfoRes.json();
     if (!fileInfoJson.ok) return jsonRes({ error: 'دریافت مسیر فایل ناموفق بود' }, 502);
 
-    // به‌جای لینک مستقیم تلگرام (که مرورگر کاربر مستقیم بهش وصل می‌شد)، از پروکسی خودِ Worker استفاده می‌کنیم
-    const secure_url = `/telegram-file?path=${encodeURIComponent(fileInfoJson.result.file_path)}`;
+    // نکته مهم: مسیر فایل تلگرام (file_path) موقتیه و بعد از مدتی نامعتبر می‌شه.
+    // برای همین به‌جای ذخیره‌ی خودِ مسیر، «file_id» رو ذخیره می‌کنیم (که همیشه معتبره)
+    // و هر بار که کاربر خواست فایل رو دانلود کنه، یه مسیر تازه براش می‌گیریم (تابع پروکسی پایین‌تر).
+    const secure_url = `/telegram-file?id=${encodeURIComponent(fileObj.file_id)}&name=${encodeURIComponent(fileName || 'file')}`;
     return jsonRes({ secure_url, bytes: bytes.length, duration: result.video ? result.video.duration : undefined });
 }
 
 // نمایش فایل‌های آپلودشده از طریق خودِ Worker (نه لینک مستقیم api.telegram.org) —
 // این‌طوری حتی اگر دامنه‌ی تلگرام برای کاربر فیلتر باشد، نمایش عکس/فیلم/صدا مشکلی پیدا نمی‌کند.
+// همچنین چون هر بار مسیر رو تازه از تلگرام می‌گیریم (با file_id)، فایل‌های قدیمی هم همیشه قابل‌دانلودن.
 async function handleTelegramFileProxy(request, env) {
     const BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
     if (!BOT_TOKEN) return new Response('توکن بات تنظیم نشده', { status: 500 });
 
     const url = new URL(request.url);
-    const path = url.searchParams.get('path');
-    if (!path) return new Response('مسیر فایل مشخص نشده', { status: 400 });
+    const fileId = url.searchParams.get('id');
+    const originalName = url.searchParams.get('name') || '';
+    const legacyPath = url.searchParams.get('path'); // سازگاری با فایل‌های قدیمی‌تر که فقط path داشتن
+
+    let path = legacyPath;
+    if (fileId) {
+        const fileInfoRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+        const fileInfoJson = await fileInfoRes.json();
+        if (!fileInfoJson.ok) return new Response('فایل مورد نظر یافت نشد یا از تلگرام حذف شده', { status: 502 });
+        path = fileInfoJson.result.file_path;
+    }
+    if (!path) return new Response('مسیر یا شناسه فایل مشخص نشده', { status: 400 });
 
     const tgRes = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`);
     if (!tgRes.ok) return new Response('دریافت فایل از تلگرام ناموفق بود', { status: 502 });
 
-    // پسوند رو از مسیر خودِ تلگرام استخراج کن (معمولاً پسوند اصلی فایل حفظ می‌شود)
-    const ext = (path.split('.').pop() || '').toLowerCase();
+    // پسوند رو از اسم فایل اصلی (در زمان آپلود) یا از مسیر تلگرام استخراج کن
+    const ext = ((originalName || path).split('.').pop() || '').toLowerCase();
     const MIME_MAP = {
         pdf: 'application/pdf',
         doc: 'application/msword',
@@ -636,12 +695,14 @@ async function handleTelegramFileProxy(request, env) {
         mp4: 'video/mp4', mp3: 'audio/mpeg'
     };
     const contentType = MIME_MAP[ext] || tgRes.headers.get('Content-Type') || 'application/octet-stream';
-    const fileName = path.split('/').pop() || ('file' + (ext ? '.' + ext : ''));
+    const fileName = originalName || path.split('/').pop() || ('file' + (ext ? '.' + ext : ''));
 
     const headers = new Headers();
     headers.set('Content-Type', contentType);
-    headers.set('Content-Disposition', `inline; filename="${fileName}"`);
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+    // attachment به‌جای inline: مرورگر/اپ رو مجبور می‌کنه فایل رو مستقیم دانلود کنه، نه اینکه سعی کنه نمایشش بده
+    headers.set('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    // چون دیگه یه مسیر ثابت نیست (هر بار تازه گرفته می‌شه)، کش طولانی‌مدت نمی‌ذاریم
+    headers.set('Cache-Control', 'private, max-age=300');
     return new Response(tgRes.body, { status: 200, headers });
 }
 
@@ -652,13 +713,16 @@ async function handleTelegramFileProxy(request, env) {
 async function handleGoogleStart(request, env) {
     const url = new URL(request.url);
     const redirectUri = `${url.origin}/api/auth/google/callback`;
+    // اگه اپ موبایل این پارامتر رو بفرسته (mobile=1)، بعد از ورود به‌جای صفحه‌ی وب، به خودِ اپ برمی‌گردیم
+    const isMobile = url.searchParams.get('mobile') === '1';
     const params = new URLSearchParams({
         client_id: env.GOOGLE_CLIENT_ID,
         redirect_uri: redirectUri,
         response_type: 'code',
         scope: 'openid email profile',
         access_type: 'online',
-        prompt: 'select_account'
+        prompt: 'select_account',
+        state: isMobile ? 'app' : ''
     });
     return Response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`, 302);
 }
@@ -666,7 +730,9 @@ async function handleGoogleStart(request, env) {
 async function handleGoogleCallback(request, env) {
     const url = new URL(request.url);
     const code = url.searchParams.get('code');
-    if (!code) return Response.redirect(`${url.origin}/?authError=google`, 302);
+    const isMobile = url.searchParams.get('state') === 'app';
+    const errorRedirect = isMobile ? 'shakerestanapp://auth?authError=google' : `${url.origin}/?authError=google`;
+    if (!code) return Response.redirect(errorRedirect, 302);
 
     const redirectUri = `${url.origin}/api/auth/google/callback`;
     try {
@@ -679,14 +745,14 @@ async function handleGoogleCallback(request, env) {
             })
         });
         const tokenJson = await tokenRes.json();
-        if (!tokenRes.ok || !tokenJson.access_token) return Response.redirect(`${url.origin}/?authError=google`, 302);
+        if (!tokenRes.ok || !tokenJson.access_token) return Response.redirect(errorRedirect, 302);
 
         const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
             headers: { Authorization: `Bearer ${tokenJson.access_token}` }
         });
         const userInfo = await userInfoRes.json();
         const emailLower = (userInfo.email || '').trim().toLowerCase();
-        if (!emailLower) return Response.redirect(`${url.origin}/?authError=google`, 302);
+        if (!emailLower) return Response.redirect(errorRedirect, 302);
 
         const uid = 'u_' + (await sha256Hex(emailLower)).slice(0, 28);
         const isAdmin = emailLower === ADMIN_EMAIL;
@@ -707,8 +773,56 @@ async function handleGoogleCallback(request, env) {
             uid, email: emailLower, isAdmin, kind: 'google', editorId: editorId || null,
             exp: Date.now() + SESSION_TTL_MS
         });
-        return Response.redirect(`${url.origin}/?googleSession=${encodeURIComponent(session)}`, 302);
+        const successRedirect = isMobile
+            ? `shakerestanapp://auth?googleSession=${encodeURIComponent(session)}`
+            : `${url.origin}/?googleSession=${encodeURIComponent(session)}`;
+        return Response.redirect(successRedirect, 302);
     } catch (e) {
-        return Response.redirect(`${url.origin}/?authError=google`, 302);
+        return Response.redirect(errorRedirect, 302);
     }
 }
+
+// ورود با گوگل به روش «Native» (بدون باز شدن مرورگر) - مخصوص اپ موبایل.
+// اپ با کتابخونه‌ی رسمی گوگل یه idToken می‌گیره، اینجا همون توکن رو تایید می‌کنیم.
+async function handleGoogleVerifyToken(request, env) {
+    try {
+        const { idToken } = await request.json();
+        if (!idToken) return jsonRes({ error: 'idToken لازم است' }, 400);
+
+        // تایید اعتبار توکن مستقیم از خود گوگل (امن‌ترین روش، نیازی به کتابخونه‌ی جانبی نیست)
+        const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
+        const payload = await verifyRes.json();
+        if (!verifyRes.ok || !payload.email) return jsonRes({ error: 'توکن گوگل نامعتبر است' }, 401);
+
+        // چک می‌کنیم توکن واقعاً برای همین اپ صادر شده (جلوگیری از جعل توکن)
+        // نکته: مقدار aud همیشه همون Web Client ID هست (حتی برای ورود از اپ اندروید) -
+        // این رفتار استاندارد گوگله، نه اشتباه.
+        if (env.GOOGLE_WEB_CLIENT_ID && payload.aud !== env.GOOGLE_WEB_CLIENT_ID) {
+            return jsonRes({ error: 'توکن گوگل برای این اپ معتبر نیست' }, 401);
+        }
+
+        const emailLower = (payload.email || '').trim().toLowerCase();
+        const uid = 'u_' + (await sha256Hex(emailLower)).slice(0, 28);
+        const isAdmin = emailLower === ADMIN_EMAIL;
+        const editorId = isAdmin ? null : await findEditorByEmail(env, emailLower);
+
+        const existing = await firestoreGet(env, `users/${uid}`);
+        if (!existing) {
+            await firestoreSet(env, `users/${uid}`, {
+                email: emailLower, name: payload.name || emailLower.split('@')[0],
+                chatName: payload.name || emailLower.split('@')[0],
+                avatarId: '', authType: 'google', status: 'approved',
+                profileCompleted: false, createdAtMs: Date.now()
+            });
+        }
+
+        const session = await signTicket(env.WORKER_AUTH_SECRET, {
+            uid, email: emailLower, isAdmin, kind: 'google', editorId: editorId || null,
+            exp: Date.now() + SESSION_TTL_MS
+        });
+        return jsonRes({ session, uid, email: emailLower, isAdmin, editorId: editorId || null, status: 'active' });
+    } catch (e) {
+        return jsonRes({ error: 'ورود با گوگل ناموفق بود' }, 500);
+    }
+}
+
