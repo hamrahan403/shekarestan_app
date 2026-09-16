@@ -1,22 +1,4 @@
-/*
-  university-treasury.js
-  ------------------------------------------------------------------
-  این فایل، بخش «ویدیوها» و «جزوه‌ها» رو به دو دسته تقسیم می‌کنه:
-    - کلاس‌های دانشگاه   (tier = 'university')
-    - گنجینه تدریس/جزوات  (tier = 'treasury')
 
-  طراحی‌شده تا کنار کد اصلی سایت (بدون دست زدن به فایل obfuscate‌شده) کار کنه.
-  از همون توابع سراسری خودِ سایت استفاده می‌کنه: apiFs, DATA, currentUser,
-  openAdminModal, closeAdminModal, showToast, escapeHtml, uploadToCloudinary,
-  formatDuration, formatBytes
-
-  نحوه‌ی نصب:
-  1) این فایل رو کنار index.html بذارید (مثلاً اسمش رو university-treasury.js بگذارید)
-  2) همین یه خط رو، درست قبل از </body> و بعد از اسکریپت اصلی سایت اضافه کنید:
-       <script src="university-treasury.js"></script>
-  3) توی بخش <style> سایت (یا همین فایل با تگ <style> جدا) این چند خط CSS رو هم اضافه کنید
-     (پایین همین فایل، بخش CSS_TO_ADD رو کپی کنید)
-*/
 
 (function () {
   'use strict';
@@ -65,7 +47,9 @@
       ? `<button class="ut-add-subject-btn" onclick="UT.addSubjectPrompt('${type}','${tier}')">➕ افزودن درس جدید</button>`
       : '';
 
+    const backBtn = `<button class="ut-add-subject-btn" onclick="UT.backToTierChooser('${type}')" style="background:var(--cream);">← بازگشت</button>`;
     containerEl.innerHTML =
+      backBtn +
       addBtn +
       subjects
         .map(
