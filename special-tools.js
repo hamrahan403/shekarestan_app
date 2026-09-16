@@ -1,29 +1,3 @@
-/*
-  special-tools.js
-  ------------------------------------------------------------------
-  جایگزین کامل بخش «آموزش تعاملی» با منوی جدید «ابزار ویژه»:
-
-    ☢️ ابزار ویژه
-      ├── 🧮 محاسبه معدل      (به‌زودی تکمیل می‌شود)
-      ├── 📝 آزمون            (به‌زودی تکمیل می‌شود)
-      ├── 📖 رفرنس            (به‌زودی تکمیل می‌شود)
-      └── ➕ آموزش پلاس+
-            ├── 🧠 آموزش نوروآناتومی → راه‌های عصبی (محتوای واقعی حفظ شده)
-            └── 🦠 آموزش اپیدمیولوژی → داستان شهر شکرستان (محتوای واقعی حفظ شده)
-
-  بخش «انگل‌شناسی» و «اپ تعاملی آناتومی» بر اساس درخواست کامل حذف شدن.
-
-  نحوه‌ی نصب:
-  1) این فایل رو کنار index.html بذارید
-  2) قبل از </body>، بعد از اسکریپت اصلی سایت، اضافه کنید:
-       <script src="special-tools.js"></script>
-  3) طبق فایل HEADER-ICON-CHANGE.md، آیکون هدر رو هم عوض کنید (📚 → ☢️)
-
-  این فایل به توابع سراسری موجود سایت وصل می‌شه (renderNeuroList, renderEpidList,
-  openNeuroPath, nextNeuroStep, prevNeuroStep, backToNeuroList, openEpidStory,
-  nextEpidStep, backToEpidList, navigateTo, pauseLearnMedia) و هیچ‌کدوم از اونا رو
-  بازنویسی نمی‌کنه - فقط مسیر ورود بهشون رو عوض می‌کنه.
-*/
 
 (function () {
   'use strict';
@@ -35,6 +9,7 @@
     <div class="st-header">
       <button id="st-back-btn" class="st-back-btn">‹ بازگشت</button>
       <h2 id="st-title">☢️ ابزار ویژه</h2>
+      <button id="st-close-btn" class="st-back-btn">✕ بستن</button>
     </div>
     <div id="st-menu-root" class="st-body"></div>
   `;
@@ -43,6 +18,7 @@
   const menuRoot = overlay.querySelector('#st-menu-root');
   const titleEl = overlay.querySelector('#st-title');
   const backBtn = overlay.querySelector('#st-back-btn');
+  const closeBtn = overlay.querySelector('#st-close-btn');
 
   // ---------- صفحه‌ی اصلی: ابزار ویژه ----------
   function renderMainMenu() {
@@ -153,6 +129,7 @@
     if (e.target === overlay) closeOverlay();
   });
 
+  closeBtn.addEventListener('click', closeOverlay);
   window.ST = { openLearnPlusMenu, openNeuro, openEpid, comingSoon, closeOverlay };
 
   // ---------- گرفتن کنترل آیکون هدر (☢️) - بدون حذف رفتار قدیمی، فقط override با اولویت ----------
