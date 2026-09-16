@@ -1531,9 +1531,16 @@
 
                 <!-- Search results (flat) -->
                 <div class="notes-grid" id="notes-search-results" style="display:none;"></div>
+                <div id="ut-notes-chooser"></div>
+                <div id="ut-notes-subjects" style="display:none;"></div>
+                <div id="ut-notes-items-view" style="display:none;">
+  <button onclick="UT.backToSubjects('notes')" style="background:none;border:none;font-family:var(--font);font-size:0.9rem;color:var(--terracotta);cursor:pointer;margin-bottom:12px;">← بازگشت به درس‌ها</button>
+  <h3 id="ut-notes-items-title" style="color:var(--terracotta);margin-bottom:10px;"></h3>
+  <div id="ut-notes-items"></div>
+                </div>
 
                 <!-- Subjects list -->
-                <div id="notes-subjects-view">
+                <div id="notes-subjects-view" style="display:none;">
                     <button class="admin-only" id="add-subject-btn" style="display:none;width:100%;margin-bottom:8px;padding:10px;background:var(--gold);border:none;border-radius:12px;font-family:var(--font);font-size:0.85rem;cursor:pointer;color:#3a2a1a;">➕ افزودن درس جدید (ادمین)</button>
                     <button class="admin-only" id="add-note-subject-btn" style="display:none;width:100%;margin-bottom:14px;padding:10px;background:var(--teal-light);border:2px dashed var(--teal-dark);border-radius:12px;font-family:var(--font);font-size:0.85rem;cursor:pointer;color:var(--teal-dark);">➕ افزودن جزوه جدید (ادمین)</button>
                     <div id="notes-subjects-grid" class="notes-grid"></div>
@@ -1555,7 +1562,14 @@
                         <span>🎥 ویدیوهای آموزشی</span>
                         <button class="admin-only" id="add-video-btn" style="display:none;background:var(--teal-light);border:1px solid var(--teal-dark);border-radius:40px;padding:4px 12px;font-family:var(--font);font-size:0.7rem;cursor:pointer;color:var(--teal-dark);">➕ آپلود</button>
                     </div>
-                    <div id="videos-list"></div>
+                    <div id="ut-videos-chooser"></div>
+                    <div id="ut-videos-subjects" style="display:none;"></div>
+                    <div id="ut-videos-items-view" style="display:none;">
+  <button onclick="UT.backToSubjects('videos')" style="background:none;border:none;font-family:var(--font);font-size:0.9rem;color:var(--terracotta);cursor:pointer;margin-bottom:12px;">← بازگشت به درس‌ها</button>
+  <h3 id="ut-videos-items-title" style="color:var(--terracotta);margin-bottom:10px;"></h3>
+  <div id="ut-videos-items"></div>
+                    </div>
+                    <div id="videos-list" style="display:none;"></div>
                 </div>
             </div>
 
