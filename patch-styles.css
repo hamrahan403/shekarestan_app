@@ -1,0 +1,87 @@
+/*
+  patch-styles.css
+  این استایل‌ها رو به بخش <style> موجود سایت اضافه کنید (یا یه <link> جدا بسازید).
+  از همون متغیرهای رنگی خودِ سایت استفاده می‌کنه (--gold, --terracotta, --cream, ...)
+*/
+
+/* ---------- کارت‌های دسته (کلاس‌های دانشگاه / گنجینه) ---------- */
+.ut-tier-card {
+  background: var(--cream);
+  border: 2px solid var(--gold);
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.ut-tier-card:active { transform: scale(0.97); }
+.ut-tier-label { font-size: 1rem; font-weight: 700; color: var(--terracotta); }
+
+/* ---------- کارت‌های درس ---------- */
+.ut-subject-card {
+  background: #fff;
+  border: 1px solid var(--beige-dark);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 8px;
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ut-subject-icon { font-size: 1.4rem; }
+.ut-subject-name { font-weight: 700; color: var(--brown-dark); flex: 1; }
+.ut-subject-count { font-size: 0.72rem; color: var(--brown-light); }
+.ut-add-subject-btn {
+  width: 100%; margin-bottom: 10px; padding: 10px;
+  background: var(--gold); border: none; border-radius: 12px;
+  font-family: var(--font); font-size: 0.85rem; cursor: pointer; color: #3a2a1a;
+}
+.ut-empty { text-align: center; color: var(--brown-light); font-size: 0.85rem; padding: 20px 0; }
+
+/* ---------- کارت‌های آیتم (ویدیو/جزوه) ---------- */
+.ut-item-card {
+  background: #fff;
+  border: 1px solid var(--beige-dark);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  position: relative;
+}
+.ut-item-thumb { font-size: 1.6rem; margin-bottom: 4px; }
+.ut-item-title { font-weight: 700; color: var(--brown-dark); font-size: 0.9rem; }
+.ut-item-meta { font-size: 0.75rem; color: var(--brown-light); margin-top: 4px; }
+.ut-admin-row { position: absolute; top: 10px; left: 10px; display: flex; gap: 8px; }
+
+/* ---------- overlay ابزار ویژه ---------- */
+#special-tools-overlay {
+  position: fixed; inset: 0; background: var(--beige-light);
+  z-index: 999; display: none; flex-direction: column;
+  direction: rtl; font-family: var(--font);
+}
+#special-tools-overlay.open { display: flex; }
+.st-header {
+  display: flex; align-items: center; gap: 12px; padding: 16px;
+  background: var(--teal-dark); color: #fff;
+}
+.st-header h2 { font-size: 1.1rem; margin: 0; flex: 1; text-align: center; }
+.st-back-btn {
+  background: none; border: 1px solid #fff; color: #fff; border-radius: 20px;
+  padding: 6px 14px; font-family: var(--font); font-size: 0.8rem; cursor: pointer;
+}
+.st-body { padding: 16px; overflow-y: auto; flex: 1; }
+.st-item {
+  background: var(--cream); border: 1px solid var(--beige-dark); border-radius: 14px;
+  padding: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px;
+  cursor: pointer;
+}
+.st-icon { font-size: 1.4rem; }
+.st-label { font-weight: 700; color: var(--brown-dark); flex: 1; }
+.st-badge {
+  font-size: 0.68rem; color: var(--brown-light); background: var(--beige-dark);
+  padding: 3px 10px; border-radius: 10px;
+}
+.st-sub-label { font-size: 0.75rem; color: var(--brown-light); margin: -4px 0 12px 8px; }
