@@ -351,7 +351,7 @@ async function isTaskAssignee(env, uid) {
 
 // کالکشن‌هایی که فقط ادمین حق نوشتن روشون رو داره (بیشتر محتوای اپ)
 const ADMIN_ONLY_WRITE_COLLECTIONS = new Set([
-    'notes', 'videos', 'subjects', 'announcements', 'collabCalls', 'editors', 'taskAssignees'
+    'notes', 'videos', 'subjects', 'extraSubjects', 'announcements', 'collabCalls', 'editors', 'taskAssignees'
 ]);
 
 async function checkFsPermission(env, session, op, collection, docId, data) {
