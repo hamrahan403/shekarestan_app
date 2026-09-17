@@ -122,18 +122,39 @@
     });
   }
 
+  // ---------- همگام‌سازی دروس از extraSubjects سایت اصلی ----------
+  function syncSubjects() {
+    if (!Array.isArray(DATA.extraSubjects)) return;
+    if (!Array.isArray(DATA.subjects)) DATA.subjects = [];
+    const seen = new Set(DATA.subjects.map((s) => String(s.id)));
+    for (const s of DATA.extraSubjects) {
+      if (!seen.has(String(s.id))) {
+        DATA.subjects.push(s);
+        seen.add(String(s.id));
+      }
+    }
+  }
+
   // ---------- کمکی: گرفتن لیست دروسِ یک دسته ----------
   function getSubjectsForTier(type, tier) {
+    syncSubjects();
     const items = type === 'videos' ? DATA.videos : DATA.notes;
-    const namesFromItems = items.filter((i) => i.tier === tier).map((i) => i.subject);
+    const namesFromItems = items.filter((i) => (i.tier || 'university') === tier).map((i) => i.subject);
     const namesFromSubjectsDoc = (DATA.subjects || [])
-      .filter((s) => s.scope === type && s.tier === tier)
+      .filter((s) => {
+        // استخراج scope و tier از docId اگه فیلدها خراب/ناقص بودن
+        const docId = String(s.id || '');
+        const m = docId.match(/^(notes|videos)-(university|treasury):/);
+        const scope = (m && m[1]) || String(s.scope || '').replace(/-(university|treasury)$/, '');
+        const tierFromDoc = (m && m[2]) || s.tier || 'university';
+        return scope === type && tierFromDoc === tier;
+      })
       .map((s) => s.name);
     const names = [...new Set([...namesFromItems, ...namesFromSubjectsDoc])];
     return names.map((name) => ({
       name,
       icon: DATA.subjectIcons[name] || (type === 'videos' ? '🎬' : '📘'),
-      count: items.filter((i) => i.subject === name && i.tier === tier).length,
+      count: items.filter((i) => i.subject === name && (i.tier || 'university') === tier).length,
     }));
   }
 
@@ -180,7 +201,7 @@
   // ---------- رندر لیست آیتم‌های یک درس ----------
   function renderItemsForSubject(type, tier, subject, containerEl) {
     const items = (type === 'videos' ? DATA.videos : DATA.notes).filter(
-      (i) => i.subject === subject && i.tier === tier
+      (i) => i.subject === subject && (i.tier || 'university') === tier
     );
     const isAdmin = currentUser && currentUser.isAdmin;
 
@@ -272,7 +293,7 @@
       if (isVideo) await saveVideoFromForm(form, existing);
       else await saveNoteFromForm(form, existing);
 
-      // ✅ از مرجع تازه استفاده کن، نه از list قدیمی
+      // از مرجع تازه استفاده کن
       const freshList = isVideo ? DATA.videos : DATA.notes;
       let target = null;
 
@@ -291,11 +312,11 @@
 
       const patch = { subject, tier };
       if (isVideo) {
-        const h = form.manualHours ? form.manualHours.value : '0';
-        const m = form.manualMinutes ? form.manualMinutes.value : '0';
-        const s = form.manualSeconds ? form.manualSeconds.value : '0';
-        patch.duration = `${pad(h)}:${pad(m)}:${pad(s)}`;
-        console.log('[UT] manual duration =', patch.duration, '| raw:', h, m, s);
+        const hh = form.manualHours ? form.manualHours.value : '0';
+        const mm = form.manualMinutes ? form.manualMinutes.value : '0';
+        const ss = form.manualSeconds ? form.manualSeconds.value : '0';
+        patch.duration = `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+        console.log('[UT] manual duration =', patch.duration, '| raw:', hh, mm, ss);
       }
 
       try {
@@ -346,7 +367,7 @@
         data: { name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier, createdAtMs: Date.now() },
       });
       if (!DATA.subjects) DATA.subjects = [];
-      DATA.subjects.push({ name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier });
+      DATA.subjects.push({ id: `${type}-${tier}:${trimmed}`, name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier });
       showToast('✅ درس اضافه شد');
       UT.refreshCurrentView(type);
     } catch (e) {
@@ -356,7 +377,7 @@
 
   async function deleteSubjectPrompt(type, tier, name) {
     const items = type === 'videos' ? DATA.videos : DATA.notes;
-    const count = items.filter((i) => i.subject === name && i.tier === tier).length;
+    const count = items.filter((i) => i.subject === name && (i.tier || 'university') === tier).length;
     if (count > 0) {
       showToast(`⚠️ این درس ${count} ${type === 'videos' ? 'ویدیو' : 'جزوه'} دارد، اول آن‌ها را حذف کن`);
       return;
