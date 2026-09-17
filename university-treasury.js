@@ -11,14 +11,20 @@
 
   let activeTier = { notes: null, videos: null }; // null = هنوز دسته انتخاب نشده
 
+  function hideOldUI() {
+    ['notes-subjects-view', 'video-subject-scroller', 'videos-list'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+  }
+
   // ---------- کمکی: گرفتن لیست دروسِ یک دسته‌ی خاص ----------
   function getSubjectsForTier(type, tier) {
     // type: 'notes' | 'videos'
-    const scope = `${type}-${tier}`;
     const items = type === 'videos' ? DATA.videos : DATA.notes;
     const namesFromItems = items.filter((i) => i.tier === tier).map((i) => i.subject);
     const namesFromSubjectsDoc = (DATA.subjects || [])
-      .filter((s) => s.scope === scope)
+      .filter((s) => s.scope === type && s.tier === tier)
       .map((s) => s.name);
     const names = [...new Set([...namesFromItems, ...namesFromSubjectsDoc])];
     return names.map((name) => ({
@@ -116,14 +122,13 @@
     const name = prompt('نام درس جدید رو وارد کن:');
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
-    const scope = `${type}-${tier}`;
     try {
       await apiFs('set', 'subjects', {
-        docId: `${scope}:${trimmed}`,
-        data: { name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope, createdAtMs: Date.now() },
+        docId: `${type}-${tier}:${trimmed}`,
+        data: { name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier, createdAtMs: Date.now() },
       });
       if (!DATA.subjects) DATA.subjects = [];
-      DATA.subjects.push({ name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope });
+      DATA.subjects.push({ name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier });
       showToast('✅ درس اضافه شد');
       UT.refreshCurrentView();
     } catch (e) {
@@ -139,10 +144,9 @@
       return;
     }
     if (!confirm(`درس «${name}» حذف شود؟`)) return;
-    const scope = `${type}-${tier}`;
     try {
-      await apiFs('delete', 'subjects', { docId: `${scope}:${name}` });
-      DATA.subjects = (DATA.subjects || []).filter((s) => !(s.name === name && s.scope === scope));
+      await apiFs('delete', 'subjects', { docId: `${type}-${tier}:${name}` });
+      DATA.subjects = (DATA.subjects || []).filter((s) => !(s.name === name && s.scope === type && s.tier === tier));
       showToast('✅ درس حذف شد');
       UT.refreshCurrentView();
     } catch (e) {
@@ -180,6 +184,7 @@
   }
 
   function refreshCurrentView(onlyType) {
+    hideOldUI();
     ['notes', 'videos'].forEach((type) => {
       if (onlyType && onlyType !== type) return;
       const chooserId = type === 'videos' ? 'ut-videos-chooser' : 'ut-notes-chooser';

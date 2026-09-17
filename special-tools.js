@@ -65,7 +65,7 @@
     titleEl.textContent = '🧠 راه‌های عصبی';
     backBtn.style.display = 'inline-block';
     backBtn.onclick = openLearnPlusMenu;
-    menuRoot.innerHTML = `<div id="learn-neuro-list-mount"></div><div id="learn-neuro-step-mount" style="display:none;"></div>`;
+    menuRoot.innerHTML = `<div id="learn-neuro-list-mount"></div><div id="learn-neuro-step-mount"></div>`;
 
     // از رندرکننده‌ی واقعی خودِ سایت استفاده می‌کنیم تا محتوا (راه‌های عصبی) دقیقاً همون قبلی بمونه
     if (typeof renderNeuroList === 'function') {
@@ -89,7 +89,7 @@
     titleEl.textContent = '🦠 داستان شهر شکرستان';
     backBtn.style.display = 'inline-block';
     backBtn.onclick = openLearnPlusMenu;
-    menuRoot.innerHTML = `<div id="learn-epid-list-mount"></div><div id="learn-epid-step-mount" style="display:none;"></div>`;
+    menuRoot.innerHTML = `<div id="learn-epid-list-mount"></div><div id="learn-epid-step-mount"></div>`;
 
     if (typeof renderEpidList === 'function') {
       const realList = document.getElementById('learn-epid-list');
@@ -135,15 +135,24 @@
   // ---------- گرفتن کنترل آیکون هدر (☢️) - بدون حذف رفتار قدیمی، فقط override با اولویت ----------
   function hookHeaderIcon() {
     const learnBtn = document.getElementById('learnBtn');
-    if (!learnBtn) return;
-    learnBtn.addEventListener(
+    if (learnBtn) learnBtn.style.display = 'none'; // آیکون گوشه‌ی هدر رو مخفی می‌کنیم
+
+    const nav = document.querySelector('.bottom-nav');
+    if (!nav || document.getElementById('st-nav-btn')) return;
+
+    const newBtn = document.createElement('button');
+    newBtn.className = 'nav-item';
+    newBtn.id = 'st-nav-btn';
+    newBtn.innerHTML = '<span class="icon">☢️</span><span class="label">ابزار ویژه</span>';
+    newBtn.addEventListener(
       'click',
       (e) => {
         e.stopImmediatePropagation();
         openOverlay();
       },
-      true // capture: قبل از هندلر قدیمی سایت اجرا می‌شه و جلوش رو می‌گیره
+      true
     );
+    nav.appendChild(newBtn);
   }
 
   if (document.readyState !== 'loading') hookHeaderIcon();
