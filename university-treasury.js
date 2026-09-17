@@ -1,5 +1,3 @@
-
-
 (function () {
   'use strict';
 
@@ -335,6 +333,19 @@
 
   // اجرای اول بعد از لود کامل صفحه
   function init() {
+    ['renderNotesPage', 'renderVideos', 'renderVideoSubjectScroller'].forEach((fnName) => {
+      if (typeof window[fnName] === 'function' && !window[fnName]._utPatched) {
+        const orig = window[fnName];
+        const patched = function (...args) {
+          const r = orig.apply(this, args);
+          hideOldUI();
+          return r;
+        };
+        patched._utPatched = true;
+        window[fnName] = patched;
+      }
+    });
+
     hideOldUI();
     refreshCurrentView();
 
