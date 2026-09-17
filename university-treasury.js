@@ -157,14 +157,14 @@
       ? `✏️ ویرایش ${isVideo ? 'ویدیو' : 'جزوه'} - ${subject}`
       : `➕ افزودن ${isVideo ? 'ویدیو' : 'جزوه'} جدید - ${subject}`;
 
+    const idsBefore = new Set(list.map((i) => i.id));
     openAdminModal(modalTitle, standardHtml + durationHtml, async (form) => {
       if (isVideo) await saveVideoFromForm(form, existing);
       else await saveNoteFromForm(form, existing);
 
-      const itemTitle = form.title.value.trim();
       const target = existing
         ? list.find((i) => i.id === existing.id)
-        : [...list].reverse().find((i) => i.title === itemTitle);
+        : list.find((i) => !idsBefore.has(i.id));
 
       if (target) {
         const patch = { subject, tier };
@@ -252,6 +252,7 @@
   }
 
   function openSubject(type, tier, subject) {
+    hideOldUI();
     const containerId = type === 'videos' ? 'ut-videos-items' : 'ut-notes-items';
     const listView = type === 'videos' ? 'ut-videos-subjects' : 'ut-notes-subjects';
     const itemsView = type === 'videos' ? 'ut-videos-items-view' : 'ut-notes-items-view';
