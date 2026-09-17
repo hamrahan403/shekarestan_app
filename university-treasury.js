@@ -9,16 +9,54 @@
 
   let activeTier = { notes: null, videos: null };
 
-  // ================================================================
-  //  ✅ پچ ۱: رفع باگ «کلیک می‌کنم هیچی نمی‌شه»
-  //  علت: item.id عدد بود ولی به صورت رشته داخل onclick پاس داده
-  //        می‌شد و مقایسه‌ی === داخل توابع اصلی همیشه false می‌شد.
-  //  راه‌حل: id رو همیشه رشته‌ی امن پاس می‌دیم و داخل این فایل واسط
-  //          می‌ذاریم که آیتم واقعی رو پیدا کنه و id با نوع درست رو
-  //          به تابع اصلی سایت تحویل بده.
-  // ================================================================
+  // ---------- استایل‌های تکمیلی (بدون تداخل با patch-styles.css) ----------
+  (function injectEnhancedStyles() {
+    if (document.getElementById('ut-enhanced-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'ut-enhanced-styles';
+    s.textContent = `
+      #ut-notes-items-view, #ut-videos-items-view {
+        animation: utFadeSlide .28s ease;
+      }
+      @keyframes utFadeSlide {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      #ut-notes-items-title, #ut-videos-items-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: var(--terracotta);
+        margin: 0 0 14px;
+        padding-bottom: 10px;
+        border-bottom: 2px dashed var(--beige-dark);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ut-subject-card, .ut-item-card, .ut-tier-card {
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+      }
+      .ut-subject-card:active, .ut-item-card:active, .ut-tier-card:active {
+        transform: scale(.97);
+      }
+      .ut-subject-card:hover, .ut-item-card:hover {
+        border-color: var(--gold);
+        box-shadow: 0 4px 14px rgba(185, 139, 61, .18);
+      }
+      .ut-add-subject-btn {
+        transition: transform .15s ease, filter .15s ease;
+      }
+      .ut-add-subject-btn:active {
+        transform: scale(.98);
+      }
+      .ut-empty {
+        grid-column: 1 / -1;
+      }
+    `;
+    document.head.appendChild(s);
+  })();
 
-  // escape امن برای درج داخل onclick="..." (هم JS، هم HTML attribute)
+  // ---------- escape امن برای onclick ----------
   function jsStr(v) {
     let s = String(v == null ? '' : v)
       .replace(/\\/g, '\\\\')
@@ -64,9 +102,7 @@
     console.warn('[UT] deleteNoteAdmin در دسترس نیست');
   }
 
-  // ================================================================
-  //  ✅ پچ ۲: بستن کادر جزئیات / پلیر هنگام تعویض تب
-  // ================================================================
+  // ---------- بستن کادر جزئیات / پلیر ----------
   function closeOpenDetailViews() {
     document.querySelectorAll('video').forEach((v) => {
       try { v.pause(); } catch (e) {}
@@ -86,7 +122,7 @@
     });
   }
 
-  // ---------- کمکی: گرفتن لیست دروسِ یک دسته‌ی خاص ----------
+  // ---------- کمکی: گرفتن لیست دروسِ یک دسته ----------
   function getSubjectsForTier(type, tier) {
     const items = type === 'videos' ? DATA.videos : DATA.notes;
     const namesFromItems = items.filter((i) => i.tier === tier).map((i) => i.subject);
@@ -120,7 +156,7 @@
       ? `<button class="ut-add-subject-btn" onclick="UT.addSubjectPrompt(${jsStr(type)}, ${jsStr(tier)})">➕ افزودن درس جدید</button>`
       : '';
 
-    const backBtn = `<button class="ut-add-subject-btn" onclick="UT.backToTierChooser(${jsStr(type)})" style="background:var(--cream);">← بازگشت</button>`;
+    const backBtn = `<button class="ut-add-subject-btn" onclick="UT.backToTierChooser(${jsStr(type)})" style="background:var(--cream);color:var(--brown);">← بازگشت به دسته‌ها</button>`;
     containerEl.innerHTML =
       backBtn +
       addBtn +
@@ -141,7 +177,7 @@
         .join('') || '<div class="ut-empty">هنوز درسی ثبت نشده</div>';
   }
 
-  // ---------- رندر لیست آیتم‌های (جزوه/ویدیو) یک درس خاص ----------
+  // ---------- رندر لیست آیتم‌های یک درس ----------
   function renderItemsForSubject(type, tier, subject, containerEl) {
     const items = (type === 'videos' ? DATA.videos : DATA.notes).filter(
       (i) => i.subject === subject && i.tier === tier
@@ -149,7 +185,7 @@
     const isAdmin = currentUser && currentUser.isAdmin;
 
     const addItemBtn = isAdmin
-      ? `<button class="ut-add-subject-btn" onclick="UT.openUploadForm(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(subject)})">➕ افزودن ${type === 'videos' ? 'ویدیو' : 'جزوه'}</button>`
+      ? `<button class="ut-add-subject-btn" onclick="UT.openUploadForm(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(subject)})">➕ افزودن ${type === 'videos' ? 'ویدیو' : 'جزوه'} جدید</button>`
       : '';
 
     containerEl.innerHTML =
@@ -194,7 +230,7 @@
     return String(parseInt(n, 10) || 0).padStart(2, '0');
   }
 
-  // ---------- افزودن/ویرایش جزوه یا ویدیو ----------
+  // ---------- افزودن / ویرایش جزوه یا ویدیو ----------
   async function openUploadForm(type, tier, subject, existingId) {
     const isVideo = type === 'videos';
     const list = isVideo ? DATA.videos : DATA.notes;
@@ -246,7 +282,8 @@
           console.error('tier/subject patch error:', e);
         }
       }
-      UT.refreshCurrentView();
+      // ✅ بعد از ذخیره، داخل همون درس بمون (نه اینکه به لیست درس‌ها پرت بشیم)
+      UT.refreshCurrentView(null, true);
     });
 
     setTimeout(() => {
@@ -275,7 +312,7 @@
     }, 60);
   }
 
-  // ---------- افزودن درس جدید (ادمین) ----------
+  // ---------- افزودن درس جدید ----------
   async function addSubjectPrompt(type, tier) {
     const name = prompt('نام درس جدید رو وارد کن:');
     if (!name || !name.trim()) return;
@@ -288,7 +325,7 @@
       if (!DATA.subjects) DATA.subjects = [];
       DATA.subjects.push({ name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier });
       showToast('✅ درس اضافه شد');
-      UT.refreshCurrentView();
+      UT.refreshCurrentView(type);
     } catch (e) {
       showToast('⚠️ خطا: ' + (e.message || ''));
     }
@@ -306,15 +343,17 @@
       await apiFs('delete', 'subjects', { docId: `${type}-${tier}:${name}` });
       DATA.subjects = (DATA.subjects || []).filter((s) => !(s.name === name && s.scope === type && s.tier === tier));
       showToast('✅ درس حذف شد');
-      UT.refreshCurrentView();
+      UT.refreshCurrentView(type);
     } catch (e) {
       showToast('⚠️ خطا: ' + (e.message || ''));
     }
   }
 
-  // ---------- ناوبری بین حالت‌ها ----------
+  // ---------- ناوبری ----------
   function selectTier(type, tier) {
     activeTier[type] = tier;
+    // اگر قبلاً داخل یه درس بودیم، حالتش رو پاک کن
+    if (UT._current && UT._current.type === type) UT._current = null;
     UT.refreshCurrentView(type);
   }
 
@@ -323,6 +362,9 @@
     const containerId = type === 'videos' ? 'ut-videos-items' : 'ut-notes-items';
     const listView = type === 'videos' ? 'ut-videos-subjects' : 'ut-notes-subjects';
     const itemsView = type === 'videos' ? 'ut-videos-items-view' : 'ut-notes-items-view';
+    const chooserId = type === 'videos' ? 'ut-videos-chooser' : 'ut-notes-chooser';
+    const chooserEl = document.getElementById(chooserId);
+    if (chooserEl) chooserEl.style.display = 'none';
     document.getElementById(listView).style.display = 'none';
     document.getElementById(itemsView).style.display = 'block';
     document.getElementById(itemsView.replace('-view', '-title')).textContent = subject;
@@ -335,28 +377,62 @@
     const itemsView = type === 'videos' ? 'ut-videos-items-view' : 'ut-notes-items-view';
     document.getElementById(itemsView).style.display = 'none';
     document.getElementById(listView).style.display = 'block';
+    if (UT._current && UT._current.type === type) UT._current = null;
   }
 
   function backToTierChooser(type) {
     activeTier[type] = null;
+    if (UT._current && UT._current.type === type) UT._current = null;
     UT.refreshCurrentView(type);
   }
 
-  function refreshCurrentView(onlyType) {
+  // ================================================================
+  //  ✅ پچ اصلی: رفع باگ تداخل نماها
+  //  قبلاً refreshCurrentView فقط chooser و subjects رو مدیریت می‌کرد
+  //  و items-view رو مخفی نمی‌کرد؛ برای همین وقتی کاربر از پایین
+  //  روی «جزوه‌ها» می‌زد، لیست درس‌ها روی لیست جزوه‌ها باز می‌شد و
+  //  صفحه به‌هم می‌ریخت. الان هر سه نما مدیریت می‌شه.
+  // ================================================================
+  function refreshCurrentView(onlyType, keepItemsView) {
     hideOldUI();
     ['notes', 'videos'].forEach((type) => {
       if (onlyType && onlyType !== type) return;
-      const chooserId = type === 'videos' ? 'ut-videos-chooser' : 'ut-notes-chooser';
-      const listView = type === 'videos' ? 'ut-videos-subjects' : 'ut-notes-subjects';
+
+      const chooserId  = type === 'videos' ? 'ut-videos-chooser' : 'ut-notes-chooser';
+      const listView   = type === 'videos' ? 'ut-videos-subjects' : 'ut-notes-subjects';
+      const itemsView  = type === 'videos' ? 'ut-videos-items-view' : 'ut-notes-items-view';
+      const itemsWrap  = type === 'videos' ? 'ut-videos-items' : 'ut-notes-items';
+      const titleId    = itemsView.replace('-view', '-title');
+
       const chooserEl = document.getElementById(chooserId);
-      const listEl = document.getElementById(listView);
-      if (!chooserEl || !listEl) return;
+      const listEl    = document.getElementById(listView);
+      const itemsEl   = document.getElementById(itemsView);
+      if (!chooserEl || !listEl || !itemsEl) return;
+
+      const cur = UT._current;
+
+      // حالت ۱: کاربر داخل یه درسِ هم‌نوع هست و می‌خوایم همون‌جا بمونه
+      if (keepItemsView && cur && cur.type === type) {
+        chooserEl.style.display = 'none';
+        listEl.style.display = 'none';
+        itemsEl.style.display = 'block';
+        const titleEl = document.getElementById(titleId);
+        if (titleEl) titleEl.textContent = cur.subject;
+        renderItemsForSubject(type, cur.tier, cur.subject, document.getElementById(itemsWrap));
+        return;
+      }
+
+      // حالت پیش‌فرض: items-view رو ببند، حالت قبلی رو پاک کن
+      itemsEl.style.display = 'none';
+      if (cur && cur.type === type) UT._current = null;
 
       if (!activeTier[type]) {
+        // حالت ۲: هیچ دسته‌ای انتخاب نشده → انتخابگر دسته
         chooserEl.style.display = 'block';
         listEl.style.display = 'none';
         renderTierChooser(type, chooserEl);
       } else {
+        // حالت ۳: دسته انتخاب شده → لیست درس‌های اون دسته
         chooserEl.style.display = 'none';
         listEl.style.display = 'block';
         renderSubjectsForTier(type, activeTier[type], listEl);
@@ -364,7 +440,7 @@
     });
   }
 
-  // ---------- در معرض window قرار دادن ----------
+  // ---------- در معرض window ----------
   window.UT = {
     selectTier,
     openSubject,
@@ -374,12 +450,10 @@
     deleteSubjectPrompt,
     refreshCurrentView,
     openUploadForm,
-    // ✅ واسط‌های امن برای onclick ها (به‌جای openVideo/openNoteDetail مستقیم)
     openVideoById,
     openNoteDetailById,
     deleteVideoById,
     deleteNoteById,
-    // ابزار escape برای استفاده‌ی احتمالی در جاهای دیگه
     jsStr,
     editVideo: (id) => window.editVideoAdmin && window.editVideoAdmin(id),
     _current: null,
@@ -405,7 +479,7 @@
     },
   };
 
-  // اجرای اول بعد از لود کامل صفحه
+  // ---------- اجرای اول ----------
   function init() {
     ['renderNotesPage', 'renderVideos', 'renderVideoSubjectScroller'].forEach((fnName) => {
       if (typeof window[fnName] === 'function' && !window[fnName]._utPatched) {
@@ -423,10 +497,15 @@
     hideOldUI();
     refreshCurrentView();
 
+    // ✅ هر بار کاربر روی تب جزوه‌ها یا ویدیوها توی نوار پایین می‌زنه،
+    //    حالت رو به بالاترین سطح همون تب برمی‌گردونیم (نه اینکه روی
+    //    نمای قبلی سوار بشه).
     document.querySelectorAll('.bottom-nav [data-page="notes"], .bottom-nav [data-page="videos"]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        // ✅ قبل از رندر مجدد، کادر جزئیات/پلیر باز رو ببند
         closeOpenDetailViews();
+        const type = btn.dataset.page === 'notes' ? 'notes' : 'videos';
+        // پاک کردن حالت نمای جزئیات برای این نوع
+        if (UT._current && UT._current.type === type) UT._current = null;
         setTimeout(() => {
           hideOldUI();
           refreshCurrentView();
