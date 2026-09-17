@@ -12,7 +12,7 @@
   let activeTier = { notes: null, videos: null }; // null = هنوز دسته انتخاب نشده
 
   function hideOldUI() {
-    ['notes-subjects-view', 'video-subject-scroller', 'videos-list'].forEach((id) => {
+    ['notes-subjects-view', 'notes-sessions-view', 'video-subject-scroller', 'videos-list'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     });
