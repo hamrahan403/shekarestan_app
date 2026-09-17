@@ -165,7 +165,7 @@ async function firestoreUpdate(env, path, data) {
 async function firestoreList(env, collectionPath, opts = {}) {
     const token = await getGoogleAccessToken(env);
     const base = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionPath}`;
-    const params = ['pageSize=300'];
+    const params = ['pageSize=' + (opts.limit || 100)];
     if (opts.orderByField) {
         params.push(`orderBy=${encodeURIComponent(opts.orderByField)}${opts.orderByDir === 'desc' ? ' desc' : ''}`);
     }

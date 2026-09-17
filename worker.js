@@ -540,8 +540,27 @@ async function handleFsProxy(request, env) {
 
     try {
         if (op === 'list') {
+            // کش کوتاه‌مدت (۴ ثانیه) روی خروجی هر کالکشن - این تنها با تغییر همین فایل (بدون دست‌زدن
+            // به index.html) مصرف Firestore رو به‌شدت کم می‌کنه: وقتی چند کاربر/تب همزمان باز باشن
+            // و هرکدوم هر چند ثانیه یه‌بار poll بزنن، همه‌شون از یه پاسخ مشترک تازه استفاده می‌کنن
+            // به‌جای اینکه هرکدوم جدا یه خوندن کامل (تا ۳۰۰ سند) از Firestore بزنن.
+            const cache = caches.default;
+            const cacheKey = new Request(
+                `https://fs-list-cache.internal/${encodeURIComponent(collection)}?orderBy=${encodeURIComponent(orderByField || '')}:${orderByDir || ''}`
+            );
+            const cached = await cache.match(cacheKey);
+            if (cached) {
+                return cached;
+            }
+
             const items = await firestoreList(env, collection, { orderByField, orderByDir });
-            return jsonRes({ items });
+            const response = jsonRes({ items });
+            const cacheableResponse = new Response(response.clone().body, {
+                status: response.status,
+                headers: { ...Object.fromEntries(response.headers), 'Cache-Control': 'public, max-age=4' }
+            });
+            await cache.put(cacheKey, cacheableResponse);
+            return response;
         }
         if (op === 'get') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
