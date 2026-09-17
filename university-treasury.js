@@ -81,8 +81,13 @@
     );
     const isAdmin = currentUser && currentUser.isAdmin;
 
+    const addItemBtn = isAdmin
+      ? `<button class="ut-add-subject-btn" onclick="UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}')">➕ افزودن ${type === 'videos' ? 'ویدیو' : 'جزوه'}</button>`
+      : '';
+
     containerEl.innerHTML =
-      items
+      addItemBtn +
+      (items
         .map((item) => {
           if (type === 'videos') {
             return `
@@ -93,7 +98,7 @@
             ${
               isAdmin
                 ? `<div class="ut-admin-row">
-                     <span onclick="event.stopPropagation();UT.editVideo('${item.id}')">✏️</span>
+                     <span onclick="event.stopPropagation();UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}','${item.id}')">✏️</span>
                      <span onclick="event.stopPropagation();deleteVideoAdmin('${item.id}')">🗑</span>
                    </div>`
                 : ''
@@ -107,14 +112,100 @@
             ${
               isAdmin
                 ? `<div class="ut-admin-row">
-                     <span onclick="event.stopPropagation();editNoteAdmin('${item.id}')">✏️</span>
+                     <span onclick="event.stopPropagation();UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}','${item.id}')">✏️</span>
                      <span onclick="event.stopPropagation();deleteNoteAdmin('${item.id}')">🗑</span>
                    </div>`
                 : ''
             }
           </div>`;
         })
-        .join('') || '<div class="ut-empty">هنوز موردی ثبت نشده</div>';
+        .join('') || '<div class="ut-empty">هنوز موردی ثبت نشده</div>');
+  }
+
+  function pad(n) {
+    return String(parseInt(n, 10) || 0).padStart(2, '0');
+  }
+
+  // ---------- افزودن/ویرایش جزوه یا ویدیو مستقیم داخل درسِ فعلی (دیگه سوال نمی‌پرسه مال کدوم درسه) ----------
+  async function openUploadForm(type, tier, subject, existingId) {
+    const isVideo = type === 'videos';
+    const list = isVideo ? DATA.videos : DATA.notes;
+    const existing = existingId ? list.find((i) => String(i.id) === String(existingId)) : null;
+
+    const standardHtml = isVideo
+      ? videoFormFieldsHtml(existing)
+      : noteFormFieldsHtml(existing);
+
+    let h = '0', m = '0', s = '0';
+    if (existing && existing.duration && existing.duration.includes(':')) {
+      [h, m, s] = existing.duration.split(':');
+    }
+    const durationHtml = isVideo
+      ? `<div class="admin-field">
+          <label>مدت‌زمان ویدیو (دستی) *</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="number" min="0" max="99" name="manualHours" value="${parseInt(h, 10) || 0}" style="width:60px;text-align:center;">
+            :
+            <input type="number" min="0" max="59" name="manualMinutes" value="${parseInt(m, 10) || 0}" style="width:60px;text-align:center;">
+            :
+            <input type="number" min="0" max="59" name="manualSeconds" value="${parseInt(s, 10) || 0}" style="width:60px;text-align:center;">
+          </div>
+        </div>`
+      : '';
+
+    const modalTitle = existing
+      ? `✏️ ویرایش ${isVideo ? 'ویدیو' : 'جزوه'} - ${subject}`
+      : `➕ افزودن ${isVideo ? 'ویدیو' : 'جزوه'} جدید - ${subject}`;
+
+    openAdminModal(modalTitle, standardHtml + durationHtml, async (form) => {
+      if (isVideo) await saveVideoFromForm(form, existing);
+      else await saveNoteFromForm(form, existing);
+
+      const itemTitle = form.title.value.trim();
+      const target = existing
+        ? list.find((i) => i.id === existing.id)
+        : [...list].reverse().find((i) => i.title === itemTitle);
+
+      if (target) {
+        const patch = { subject, tier };
+        if (isVideo) {
+          patch.duration = `${pad(form.manualHours.value)}:${pad(form.manualMinutes.value)}:${pad(form.manualSeconds.value)}`;
+        }
+        try {
+          await apiFs('update', isVideo ? 'videos' : 'notes', { docId: String(target.id), data: patch });
+          Object.assign(target, patch);
+        } catch (e) {
+          console.error('tier/subject patch error:', e);
+        }
+      }
+      UT.refreshCurrentView();
+    });
+
+    // بعد از باز شدن مودال، فیلد «درس» رو پیدا و قفل می‌کنیم روی همین درس - دیگه چیزی نمی‌پرسه
+    setTimeout(() => {
+      const modalForm = document.querySelector('#admin-modal form, .admin-modal form');
+      if (!modalForm) return;
+      let subjectField = null;
+      modalForm.querySelectorAll('label').forEach((lbl) => {
+        if (lbl.textContent.trim().indexOf('درس') === 0) {
+          const wrapper = lbl.closest('.admin-field') || lbl.parentElement;
+          const sel = wrapper.querySelector('select');
+          if (sel) subjectField = { sel, wrapper };
+        }
+      });
+      if (subjectField) {
+        const alreadyThere = Array.from(subjectField.sel.options).some((o) => o.value === subject || o.textContent.trim() === subject);
+        if (!alreadyThere) {
+          const opt = document.createElement('option');
+          opt.value = subject;
+          opt.textContent = subject;
+          subjectField.sel.appendChild(opt);
+        }
+        subjectField.sel.value = subject;
+        subjectField.wrapper.style.display = 'none';
+      }
+      if (isVideo && typeof wireVideoFormToggles === 'function') wireVideoFormToggles();
+    }, 60);
   }
 
   // ---------- افزودن درس جدید (ادمین) ----------
@@ -214,6 +305,7 @@
     addSubjectPrompt,
     deleteSubjectPrompt,
     refreshCurrentView,
+    openUploadForm,
     editVideo: (id) => window.editVideoAdmin && window.editVideoAdmin(id),
     _current: null,
     // اجرای یک‌بارِ دستی برای جزوات/ویدیوهای قدیمی که فیلد tier ندارن (از کنسول مرورگر، فقط ادمین)
@@ -241,7 +333,22 @@
   };
 
   // اجرای اول بعد از لود کامل صفحه
-  document.addEventListener('DOMContentLoaded', () => refreshCurrentView());
-  // اگه DOM از قبل لود شده (اسکریپت دیر لود شده)
-  if (document.readyState !== 'loading') refreshCurrentView();
+  function init() {
+    hideOldUI();
+    refreshCurrentView();
+
+    // نکته‌ی مهم: سایت یه SPA‌ه (بدون رفرش صفحه)، پس هر بار که کاربر روی تب «جزوه‌ها» یا
+    // «ویدیوها» توی نوار پایین می‌زنه، خودِ سایت دوباره رابط قدیمی رو می‌سازه. باید هر بار
+    // بعد از اون، ما هم دوباره hideOldUI + رندر خودمون رو اجرا کنیم - وگرنه فقط یه‌بار اولش کار می‌کنه.
+    document.querySelectorAll('.bottom-nav [data-page="notes"], .bottom-nav [data-page="videos"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        setTimeout(() => {
+          hideOldUI();
+          refreshCurrentView();
+        }, 60); // یه تاخیر کوچیک تا رندر قدیمی خودِ سایت اول تموم بشه
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', init);
+  if (document.readyState !== 'loading') init();
 })();
