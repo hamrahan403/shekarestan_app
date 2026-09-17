@@ -9,7 +9,7 @@
 
   let activeTier = { notes: null, videos: null };
 
-  // ---------- استایل‌های تکمیلی (بدون تداخل با patch-styles.css) ----------
+  // ---------- استایل‌های تکمیلی ----------
   (function injectEnhancedStyles() {
     if (document.getElementById('ut-enhanced-styles')) return;
     const s = document.createElement('style');
@@ -226,8 +226,14 @@
         .join('') || '<div class="ut-empty">هنوز موردی ثبت نشده</div>');
   }
 
+  // ---------- pad (پشتیبانی از ارقام فارسی/عربی) ----------
   function pad(n) {
-    return String(parseInt(n, 10) || 0).padStart(2, '0');
+    if (n == null) return '00';
+    let s = String(n);
+    s = s.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+    s = s.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const num = parseInt(s, 10) || 0;
+    return String(num).padStart(2, '0');
   }
 
   // ---------- افزودن / ویرایش جزوه یا ویدیو ----------
@@ -261,28 +267,45 @@
       ? `✏️ ویرایش ${isVideo ? 'ویدیو' : 'جزوه'} - ${subject}`
       : `➕ افزودن ${isVideo ? 'ویدیو' : 'جزوه'} جدید - ${subject}`;
 
-    const idsBefore = new Set(list.map((i) => i.id));
+    const idsBefore = new Set(list.map((i) => String(i.id)));
     openAdminModal(modalTitle, standardHtml + durationHtml, async (form) => {
       if (isVideo) await saveVideoFromForm(form, existing);
       else await saveNoteFromForm(form, existing);
 
-      const target = existing
-        ? list.find((i) => i.id === existing.id)
-        : list.find((i) => !idsBefore.has(i.id));
+      // ✅ از مرجع تازه استفاده کن، نه از list قدیمی
+      const freshList = isVideo ? DATA.videos : DATA.notes;
+      let target = null;
 
-      if (target) {
-        const patch = { subject, tier };
-        if (isVideo) {
-          patch.duration = `${pad(form.manualHours.value)}:${pad(form.manualMinutes.value)}:${pad(form.manualSeconds.value)}`;
-        }
-        try {
-          await apiFs('update', isVideo ? 'videos' : 'notes', { docId: String(target.id), data: patch });
-          Object.assign(target, patch);
-        } catch (e) {
-          console.error('tier/subject patch error:', e);
-        }
+      if (existing) {
+        target = freshList.find((i) => String(i.id) === String(existing.id));
+      } else {
+        const newItems = freshList.filter((i) => !idsBefore.has(String(i.id)));
+        target = newItems[newItems.length - 1] || null;
       }
-      // ✅ بعد از ذخیره، داخل همون درس بمون (نه اینکه به لیست درس‌ها پرت بشیم)
+
+      if (!target) {
+        console.warn('[UT] target not found after save');
+        UT.refreshCurrentView(null, true);
+        return;
+      }
+
+      const patch = { subject, tier };
+      if (isVideo) {
+        const h = form.manualHours ? form.manualHours.value : '0';
+        const m = form.manualMinutes ? form.manualMinutes.value : '0';
+        const s = form.manualSeconds ? form.manualSeconds.value : '0';
+        patch.duration = `${pad(h)}:${pad(m)}:${pad(s)}`;
+        console.log('[UT] manual duration =', patch.duration, '| raw:', h, m, s);
+      }
+
+      try {
+        await apiFs('update', isVideo ? 'videos' : 'notes', { docId: String(target.id), data: patch });
+        Object.assign(target, patch);
+        console.log('[UT] patch OK →', target.duration);
+      } catch (e) {
+        console.error('[UT] patch error:', e);
+        Object.assign(target, patch);
+      }
       UT.refreshCurrentView(null, true);
     });
 
@@ -352,7 +375,6 @@
   // ---------- ناوبری ----------
   function selectTier(type, tier) {
     activeTier[type] = tier;
-    // اگر قبلاً داخل یه درس بودیم، حالتش رو پاک کن
     if (UT._current && UT._current.type === type) UT._current = null;
     UT.refreshCurrentView(type);
   }
@@ -386,13 +408,7 @@
     UT.refreshCurrentView(type);
   }
 
-  // ================================================================
-  //  ✅ پچ اصلی: رفع باگ تداخل نماها
-  //  قبلاً refreshCurrentView فقط chooser و subjects رو مدیریت می‌کرد
-  //  و items-view رو مخفی نمی‌کرد؛ برای همین وقتی کاربر از پایین
-  //  روی «جزوه‌ها» می‌زد، لیست درس‌ها روی لیست جزوه‌ها باز می‌شد و
-  //  صفحه به‌هم می‌ریخت. الان هر سه نما مدیریت می‌شه.
-  // ================================================================
+  // ---------- رفرش نما ----------
   function refreshCurrentView(onlyType, keepItemsView) {
     hideOldUI();
     ['notes', 'videos'].forEach((type) => {
@@ -411,7 +427,6 @@
 
       const cur = UT._current;
 
-      // حالت ۱: کاربر داخل یه درسِ هم‌نوع هست و می‌خوایم همون‌جا بمونه
       if (keepItemsView && cur && cur.type === type) {
         chooserEl.style.display = 'none';
         listEl.style.display = 'none';
@@ -422,17 +437,14 @@
         return;
       }
 
-      // حالت پیش‌فرض: items-view رو ببند، حالت قبلی رو پاک کن
       itemsEl.style.display = 'none';
       if (cur && cur.type === type) UT._current = null;
 
       if (!activeTier[type]) {
-        // حالت ۲: هیچ دسته‌ای انتخاب نشده → انتخابگر دسته
         chooserEl.style.display = 'block';
         listEl.style.display = 'none';
         renderTierChooser(type, chooserEl);
       } else {
-        // حالت ۳: دسته انتخاب شده → لیست درس‌های اون دسته
         chooserEl.style.display = 'none';
         listEl.style.display = 'block';
         renderSubjectsForTier(type, activeTier[type], listEl);
@@ -497,14 +509,10 @@
     hideOldUI();
     refreshCurrentView();
 
-    // ✅ هر بار کاربر روی تب جزوه‌ها یا ویدیوها توی نوار پایین می‌زنه،
-    //    حالت رو به بالاترین سطح همون تب برمی‌گردونیم (نه اینکه روی
-    //    نمای قبلی سوار بشه).
     document.querySelectorAll('.bottom-nav [data-page="notes"], .bottom-nav [data-page="videos"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         closeOpenDetailViews();
         const type = btn.dataset.page === 'notes' ? 'notes' : 'videos';
-        // پاک کردن حالت نمای جزئیات برای این نوع
         if (UT._current && UT._current.type === type) UT._current = null;
         setTimeout(() => {
           hideOldUI();
