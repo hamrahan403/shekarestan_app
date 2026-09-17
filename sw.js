@@ -19,18 +19,25 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // درخواست‌های خارج از سایت (مثل jsDelivr) را مدیریت نکن
+  // 1. فقط درخواست‌های GET رو مدیریت کن (POST، PUT و DELETE رو ول کن)
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  // 2. درخواست‌های خارج از سایت (مثل jsDelivr) رو مدیریت نکن
   if (url.origin !== location.origin) {
     return;
   }
 
+  // 3. برای فایل‌های ثابت خود سایت: اول کش، اگر نبود شبکه
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
 
       return fetch(event.request)
         .then((response) => {
-          if (response.ok) {
+          // فقط پاسخ‌های موفق و از نوع basic رو کش کن
+          if (response.ok && response.type === 'basic') {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(event.request, clone);
