@@ -7,7 +7,77 @@
     { key: 'treasury', labelNotes: '💎 گنجینه جزوات', labelVideos: '💎 گنجینه تدریس' },
   ];
 
-  let activeTier = { notes: null, videos: null }; // null = هنوز دسته انتخاب نشده
+  let activeTier = { notes: null, videos: null };
+
+  // ================================================================
+  //  ✅ پچ ۱: رفع باگ «کلیک می‌کنم هیچی نمی‌شه»
+  //  علت: item.id عدد بود ولی به صورت رشته داخل onclick پاس داده
+  //        می‌شد و مقایسه‌ی === داخل توابع اصلی همیشه false می‌شد.
+  //  راه‌حل: id رو همیشه رشته‌ی امن پاس می‌دیم و داخل این فایل واسط
+  //          می‌ذاریم که آیتم واقعی رو پیدا کنه و id با نوع درست رو
+  //          به تابع اصلی سایت تحویل بده.
+  // ================================================================
+
+  // escape امن برای درج داخل onclick="..." (هم JS، هم HTML attribute)
+  function jsStr(v) {
+    let s = String(v == null ? '' : v)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r');
+    s = s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    return "'" + s + "'";
+  }
+
+  function findById(list, idLike) {
+    if (!Array.isArray(list)) return null;
+    const s = String(idLike);
+    return list.find((x) => x && String(x.id) === s) || null;
+  }
+
+  function openVideoById(idLike) {
+    const item = findById(DATA.videos, idLike);
+    const realId = item ? item.id : idLike;
+    if (typeof window.openVideo === 'function') return window.openVideo(realId);
+    console.warn('[UT] openVideo در دسترس نیست');
+  }
+  function openNoteDetailById(idLike) {
+    const item = findById(DATA.notes, idLike);
+    const realId = item ? item.id : idLike;
+    if (typeof window.openNoteDetail === 'function') return window.openNoteDetail(realId);
+    console.warn('[UT] openNoteDetail در دسترس نیست');
+  }
+  function deleteVideoById(idLike) {
+    const item = findById(DATA.videos, idLike);
+    const realId = item ? item.id : idLike;
+    if (typeof window.deleteVideoAdmin === 'function') return window.deleteVideoAdmin(realId);
+    console.warn('[UT] deleteVideoAdmin در دسترس نیست');
+  }
+  function deleteNoteById(idLike) {
+    const item = findById(DATA.notes, idLike);
+    const realId = item ? item.id : idLike;
+    if (typeof window.deleteNoteAdmin === 'function') return window.deleteNoteAdmin(realId);
+    console.warn('[UT] deleteNoteAdmin در دسترس نیست');
+  }
+
+  // ================================================================
+  //  ✅ پچ ۲: بستن کادر جزئیات / پلیر هنگام تعویض تب
+  // ================================================================
+  function closeOpenDetailViews() {
+    document.querySelectorAll('video').forEach((v) => {
+      try { v.pause(); } catch (e) {}
+    });
+    document
+      .querySelectorAll('[role="dialog"], .modal.active, .modal.show, .modal-open, .modal-overlay.show')
+      .forEach((el) => {
+        el.style.display = 'none';
+        el.classList.remove('active', 'show', 'open', 'modal-open');
+      });
+  }
 
   function hideOldUI() {
     ['notes-subjects-view', 'notes-sessions-view', 'video-subject-scroller', 'videos-list'].forEach((id) => {
@@ -18,7 +88,6 @@
 
   // ---------- کمکی: گرفتن لیست دروسِ یک دسته‌ی خاص ----------
   function getSubjectsForTier(type, tier) {
-    // type: 'notes' | 'videos'
     const items = type === 'videos' ? DATA.videos : DATA.notes;
     const namesFromItems = items.filter((i) => i.tier === tier).map((i) => i.subject);
     const namesFromSubjectsDoc = (DATA.subjects || [])
@@ -32,12 +101,12 @@
     }));
   }
 
-  // ---------- رندر صفحه‌ی انتخاب دسته (کلاس‌های دانشگاه | گنجینه) ----------
+  // ---------- رندر صفحه‌ی انتخاب دسته ----------
   function renderTierChooser(type, containerEl) {
     const labelKey = type === 'videos' ? 'labelVideos' : 'labelNotes';
     containerEl.innerHTML = TIERS.map(
       (t) => `
-      <div class="ut-tier-card" onclick="UT.selectTier('${type}','${t.key}')">
+      <div class="ut-tier-card" onclick="UT.selectTier(${jsStr(type)}, ${jsStr(t.key)})">
         <div class="ut-tier-label">${t[labelKey]}</div>
       </div>`
     ).join('');
@@ -48,20 +117,20 @@
     const subjects = getSubjectsForTier(type, tier);
     const isAdmin = currentUser && currentUser.isAdmin;
     const addBtn = isAdmin
-      ? `<button class="ut-add-subject-btn" onclick="UT.addSubjectPrompt('${type}','${tier}')">➕ افزودن درس جدید</button>`
+      ? `<button class="ut-add-subject-btn" onclick="UT.addSubjectPrompt(${jsStr(type)}, ${jsStr(tier)})">➕ افزودن درس جدید</button>`
       : '';
 
-    const backBtn = `<button class="ut-add-subject-btn" onclick="UT.backToTierChooser('${type}')" style="background:var(--cream);">← بازگشت</button>`;
+    const backBtn = `<button class="ut-add-subject-btn" onclick="UT.backToTierChooser(${jsStr(type)})" style="background:var(--cream);">← بازگشت</button>`;
     containerEl.innerHTML =
       backBtn +
       addBtn +
       subjects
         .map(
           (s) => `
-      <div class="ut-subject-card" onclick="UT.openSubject('${type}','${tier}','${escapeHtml(s.name)}')">
+      <div class="ut-subject-card" onclick="UT.openSubject(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(s.name)})">
         ${
           isAdmin
-            ? `<span class="admin-delete-icon" onclick="event.stopPropagation();UT.deleteSubjectPrompt('${type}','${tier}','${escapeHtml(s.name)}')">🗑</span>`
+            ? `<span class="admin-delete-icon" onclick="event.stopPropagation();UT.deleteSubjectPrompt(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(s.name)})">🗑</span>`
             : ''
         }
         <div class="ut-subject-icon">${s.icon}</div>
@@ -80,38 +149,39 @@
     const isAdmin = currentUser && currentUser.isAdmin;
 
     const addItemBtn = isAdmin
-      ? `<button class="ut-add-subject-btn" onclick="UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}')">➕ افزودن ${type === 'videos' ? 'ویدیو' : 'جزوه'}</button>`
+      ? `<button class="ut-add-subject-btn" onclick="UT.openUploadForm(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(subject)})">➕ افزودن ${type === 'videos' ? 'ویدیو' : 'جزوه'}</button>`
       : '';
 
     containerEl.innerHTML =
       addItemBtn +
       (items
         .map((item) => {
+          const idArg = jsStr(String(item.id));
           if (type === 'videos') {
             return `
-          <div class="ut-item-card" onclick="openVideo('${item.id}')">
+          <div class="ut-item-card" onclick="UT.openVideoById(${idArg})">
             <div class="ut-item-thumb">${item.thumb || '🎬'}</div>
             <div class="ut-item-title">${escapeHtml(item.title)}</div>
             <div class="ut-item-meta">${escapeHtml(item.instructor)} • ⏱ ${item.duration || '۰۰:۰۰:۰۰'}</div>
             ${
               isAdmin
                 ? `<div class="ut-admin-row">
-                     <span onclick="event.stopPropagation();UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}','${item.id}')">✏️</span>
-                     <span onclick="event.stopPropagation();deleteVideoAdmin('${item.id}')">🗑</span>
+                     <span onclick="event.stopPropagation();UT.openUploadForm(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(subject)}, ${idArg})">✏️</span>
+                     <span onclick="event.stopPropagation();UT.deleteVideoById(${idArg})">🗑</span>
                    </div>`
                 : ''
             }
           </div>`;
           }
           return `
-          <div class="ut-item-card" onclick="openNoteDetail('${item.id}')">
+          <div class="ut-item-card" onclick="UT.openNoteDetailById(${idArg})">
             <div class="ut-item-title">${escapeHtml(item.title)}</div>
             <div class="ut-item-meta">${escapeHtml(item.instructor)} • نسخه ${item.version} • ${item.size}</div>
             ${
               isAdmin
                 ? `<div class="ut-admin-row">
-                     <span onclick="event.stopPropagation();UT.openUploadForm('${type}','${tier}','${escapeHtml(subject)}','${item.id}')">✏️</span>
-                     <span onclick="event.stopPropagation();deleteNoteAdmin('${item.id}')">🗑</span>
+                     <span onclick="event.stopPropagation();UT.openUploadForm(${jsStr(type)}, ${jsStr(tier)}, ${jsStr(subject)}, ${idArg})">✏️</span>
+                     <span onclick="event.stopPropagation();UT.deleteNoteById(${idArg})">🗑</span>
                    </div>`
                 : ''
             }
@@ -124,7 +194,7 @@
     return String(parseInt(n, 10) || 0).padStart(2, '0');
   }
 
-  // ---------- افزودن/ویرایش جزوه یا ویدیو مستقیم داخل درسِ فعلی (دیگه سوال نمی‌پرسه مال کدوم درسه) ----------
+  // ---------- افزودن/ویرایش جزوه یا ویدیو ----------
   async function openUploadForm(type, tier, subject, existingId) {
     const isVideo = type === 'videos';
     const list = isVideo ? DATA.videos : DATA.notes;
@@ -179,7 +249,6 @@
       UT.refreshCurrentView();
     });
 
-    // بعد از باز شدن مودال، فیلد «درس» رو پیدا و قفل می‌کنیم روی همین درس - دیگه چیزی نمی‌پرسه
     setTimeout(() => {
       const modalForm = document.querySelector('#admin-modal form, .admin-modal form');
       if (!modalForm) return;
@@ -295,7 +364,7 @@
     });
   }
 
-  // ---------- در معرض window قرار دادن (برای onclick های HTML) ----------
+  // ---------- در معرض window قرار دادن ----------
   window.UT = {
     selectTier,
     openSubject,
@@ -305,10 +374,15 @@
     deleteSubjectPrompt,
     refreshCurrentView,
     openUploadForm,
+    // ✅ واسط‌های امن برای onclick ها (به‌جای openVideo/openNoteDetail مستقیم)
+    openVideoById,
+    openNoteDetailById,
+    deleteVideoById,
+    deleteNoteById,
+    // ابزار escape برای استفاده‌ی احتمالی در جاهای دیگه
+    jsStr,
     editVideo: (id) => window.editVideoAdmin && window.editVideoAdmin(id),
     _current: null,
-    // اجرای یک‌بارِ دستی برای جزوات/ویدیوهای قدیمی که فیلد tier ندارن (از کنسول مرورگر، فقط ادمین)
-    // مثال استفاده: UT.migrateLegacyTier('university')
     migrateLegacyTier: async function (tier) {
       if (!currentUser || !currentUser.isAdmin) return console.warn('فقط ادمین');
       let count = 0;
@@ -349,15 +423,14 @@
     hideOldUI();
     refreshCurrentView();
 
-    // نکته‌ی مهم: سایت یه SPA‌ه (بدون رفرش صفحه)، پس هر بار که کاربر روی تب «جزوه‌ها» یا
-    // «ویدیوها» توی نوار پایین می‌زنه، خودِ سایت دوباره رابط قدیمی رو می‌سازه. باید هر بار
-    // بعد از اون، ما هم دوباره hideOldUI + رندر خودمون رو اجرا کنیم - وگرنه فقط یه‌بار اولش کار می‌کنه.
     document.querySelectorAll('.bottom-nav [data-page="notes"], .bottom-nav [data-page="videos"]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        // ✅ قبل از رندر مجدد، کادر جزئیات/پلیر باز رو ببند
+        closeOpenDetailViews();
         setTimeout(() => {
           hideOldUI();
           refreshCurrentView();
-        }, 60); // یه تاخیر کوچیک تا رندر قدیمی خودِ سایت اول تموم بشه
+        }, 60);
       });
     });
   }
