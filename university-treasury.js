@@ -79,8 +79,8 @@
 
   function openVideoById(idLike) {
     const item = findById(DATA.videos, idLike);
-    const realId = item ? item.id : idLike;
-    if (typeof window.openVideo === 'function') return window.openVideo(realId);
+    if (!item) { console.warn('[UT] video not found:', idLike); return; }
+    if (typeof window.openVideo === 'function') return window.openVideo(item.url);
     console.warn('[UT] openVideo در دسترس نیست');
   }
   function openNoteDetailById(idLike) {
@@ -290,6 +290,15 @@
 
     const idsBefore = new Set(list.map((i) => String(i.id)));
     openAdminModal(modalTitle, standardHtml + durationHtml, async (form) => {
+      // این‌ها رو همین اول بخون، چون saveVideoFromForm در پایانش closeAdminModal()
+      // رو صدا می‌زنه که محتوای فرم (از جمله این فیلدها) رو پاک می‌کنه
+      let manualHH = '0', manualMM = '0', manualSS = '0';
+      if (isVideo) {
+        manualHH = form.manualHours ? form.manualHours.value : '0';
+        manualMM = form.manualMinutes ? form.manualMinutes.value : '0';
+        manualSS = form.manualSeconds ? form.manualSeconds.value : '0';
+      }
+
       if (isVideo) await saveVideoFromForm(form, existing);
       else await saveNoteFromForm(form, existing);
 
@@ -312,11 +321,8 @@
 
       const patch = { subject, tier };
       if (isVideo) {
-        const hh = form.manualHours ? form.manualHours.value : '0';
-        const mm = form.manualMinutes ? form.manualMinutes.value : '0';
-        const ss = form.manualSeconds ? form.manualSeconds.value : '0';
-        patch.duration = `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
-        console.log('[UT] manual duration =', patch.duration, '| raw:', hh, mm, ss);
+        patch.duration = `${pad(manualHH)}:${pad(manualMM)}:${pad(manualSS)}`;
+        console.log('[UT] manual duration =', patch.duration, '| raw:', manualHH, manualMM, manualSS);
       }
 
       try {
@@ -353,6 +359,7 @@
         subjectField.wrapper.style.display = 'none';
       }
       if (isVideo && typeof wireVideoFormToggles === 'function') wireVideoFormToggles();
+      if (!isVideo && typeof wireNoteSourceToggle === 'function') wireNoteSourceToggle();
     }, 60);
   }
 
@@ -361,13 +368,16 @@
     const name = prompt('نام درس جدید رو وارد کن:');
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
+    const defaultIcon = type === 'videos' ? '🎬' : '📘';
+    const iconInput = prompt('یک ایموجی برای این درس انتخاب کن (اختیاری):', defaultIcon);
+    const icon = (iconInput && iconInput.trim()) ? iconInput.trim() : defaultIcon;
     try {
       await apiFs('set', 'subjects', {
         docId: `${type}-${tier}:${trimmed}`,
-        data: { name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier, createdAtMs: Date.now() },
+        data: { name: trimmed, icon, scope: type, tier, createdAtMs: Date.now() },
       });
       if (!DATA.subjects) DATA.subjects = [];
-      DATA.subjects.push({ id: `${type}-${tier}:${trimmed}`, name: trimmed, icon: type === 'videos' ? '🎬' : '📘', scope: type, tier });
+      DATA.subjects.push({ id: `${type}-${tier}:${trimmed}`, name: trimmed, icon, scope: type, tier });
       showToast('✅ درس اضافه شد');
       UT.refreshCurrentView(type);
     } catch (e) {
@@ -385,7 +395,12 @@
     if (!confirm(`درس «${name}» حذف شود؟`)) return;
     try {
       await apiFs('delete', 'subjects', { docId: `${type}-${tier}:${name}` });
-      DATA.subjects = (DATA.subjects || []).filter((s) => !(s.name === name && s.scope === type && s.tier === tier));
+      const matchesDeleted = (s) =>
+        s.name === name && (s.scope === type || String(s.id || '').startsWith(`${type}-${tier}:`));
+      DATA.subjects = (DATA.subjects || []).filter((s) => !matchesDeleted(s));
+      if (Array.isArray(DATA.extraSubjects)) {
+        DATA.extraSubjects = DATA.extraSubjects.filter((s) => !matchesDeleted(s));
+      }
       showToast('✅ درس حذف شد');
       UT.refreshCurrentView(type);
     } catch (e) {
