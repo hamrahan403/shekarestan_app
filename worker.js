@@ -8,7 +8,27 @@
 // روی Firestore، از طریق همین Worker (با Service Account) انجام می‌شود.
 
 import { firestoreSet, firestoreGet, firestoreDelete, firestoreAdd, firestoreUpdate, firestoreList } from './lib-firestore.js';
+import { d1Set, d1Get, d1Delete, d1Add, d1Update, d1List } from './lib-d1.js';
 import { signTicket, verifyTicket } from './lib-ticket.js';
+
+// کالکشن‌هایی که به D1 منتقل شدن (کم‌حجم‌تر نگه‌داشتن Firestore، چون سهمیه‌ی رایگانش تنگ‌تره).
+// بقیه (notes, videos, users, pendingRequests, editors, taskAssignees, adminActions, verifiedEmails, settings)
+// همچنان روی Firestore می‌مونن. برای هر مسیر (حتی تودرتو مثل taskDeliveries/x/threads/y/messages)
+// فقط بخش اولش چک می‌شه.
+const D1_TOP_LEVEL_COLLECTIONS = new Set([
+    'announcements', 'notifications', 'notifDismissed', 'subjects',
+    'collabCalls', 'tasks', 'taskDeliveries', 'publicChat', 'anonChat',
+    'adminChat', 'reports', 'authCodes'
+]);
+function usesD1(path) {
+    return D1_TOP_LEVEL_COLLECTIONS.has(String(path).split('/')[0]);
+}
+async function fsList(env, path, opts) { return usesD1(path) ? d1List(env, path, opts) : firestoreList(env, path, opts); }
+async function fsGet(env, path) { return usesD1(path) ? d1Get(env, path) : firestoreGet(env, path); }
+async function fsSet(env, path, data) { return usesD1(path) ? d1Set(env, path, data) : firestoreSet(env, path, data); }
+async function fsUpdate(env, path, data) { return usesD1(path) ? d1Update(env, path, data) : firestoreUpdate(env, path, data); }
+async function fsDelete(env, path) { return usesD1(path) ? d1Delete(env, path) : firestoreDelete(env, path); }
+async function fsAdd(env, path, data) { return usesD1(path) ? d1Add(env, path, data) : firestoreAdd(env, path, data); }
 
 const ADMIN_EMAIL = 'hamrahanjozveh@gmail.com';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // ۳۰ روز
@@ -32,6 +52,7 @@ export default {
             else if (p === '/api/auth/google/verify-token' && request.method === 'POST') response = await handleGoogleVerifyToken(request, env);
             else if (p === '/api/auth/session-status' && request.method === 'POST') response = await handleSessionStatus(request, env);
             else if (p === '/api/fs' && request.method === 'POST') response = await handleFsProxy(request, env);
+            else if (p === '/api/admin/migrate-to-d1' && request.method === 'POST') response = await handleMigrateToD1(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
         } catch (e) {
             response = jsonRes({ error: e.message || 'خطای داخلی سرور' }, 500);
@@ -53,7 +74,7 @@ const AUTO_MOD_GRACE_MS = 2 * 60 * 60 * 1000; // ۲ ساعت
 
 async function runAutoModeration(env) {
     try {
-        const messages = await firestoreList(env, 'publicChat', {});
+        const messages = await fsList(env, 'publicChat', {});
         const now = Date.now();
         for (const m of messages) {
             if (m.deleted) continue;
@@ -62,13 +83,13 @@ async function runAutoModeration(env) {
             if (now - m.thresholdReachedAtMs < AUTO_MOD_GRACE_MS) continue;
 
             // آیا هنوز گزارش «در انتظار»ی برای این پیام هست؟ اگه ادمین قبلاً رسیدگی کرده، نادیده بگیر
-            const reports = await firestoreList(env, 'reports', {});
+            const reports = await fsList(env, 'reports', {});
             const stillPending = reports.some(r => r.messageId === m.id && r.status === 'pending');
             if (!stillPending) continue;
 
-            await firestoreUpdate(env, `publicChat/${m.id}`, { deleted: true, deletedAtMs: now, deletedBy: 'auto' });
+            await fsUpdate(env, `publicChat/${m.id}`, { deleted: true, deletedAtMs: now, deletedBy: 'auto' });
             for (const r of reports.filter(r => r.messageId === m.id && r.status === 'pending')) {
-                await firestoreUpdate(env, `reports/${r.id}`, { status: 'action_taken' });
+                await fsUpdate(env, `reports/${r.id}`, { status: 'action_taken' });
             }
             await firestoreAdd(env, 'adminActions', {
                 type: 'auto_moderation', messageId: m.id, adminUid: 'system', createdAtMs: now
@@ -148,14 +169,14 @@ async function handleRequestCode(request, env) {
     if (!emailLower || !emailLower.includes('@')) return jsonRes({ error: 'ایمیل نامعتبر است' }, 400);
 
     const docId = safeId(emailLower);
-    const existing = await firestoreGet(env, `authCodes/${docId}`);
+    const existing = await fsGet(env, `authCodes/${docId}`);
     if (existing && existing.lockedUntilMs && Date.now() < existing.lockedUntilMs) {
         const minutesLeft = Math.ceil((existing.lockedUntilMs - Date.now()) / 60000);
         return jsonRes({ error: `تعداد تلاش‌های اشتباه زیاد بود؛ ${minutesLeft} دقیقه دیگر دوباره امتحان کنید` }, 429);
     }
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    await firestoreSet(env, `authCodes/${docId}`, {
+    await fsSet(env, `authCodes/${docId}`, {
         email: emailLower, code,
         createdAtMs: Date.now(),
         expiresAtMs: Date.now() + 10 * 60 * 1000
@@ -183,7 +204,7 @@ async function handleVerifyCode(request, env) {
     const { email, code } = await request.json();
     const emailLower = (email || '').trim().toLowerCase();
     const docId = safeId(emailLower);
-    const stored = await firestoreGet(env, `authCodes/${docId}`);
+    const stored = await fsGet(env, `authCodes/${docId}`);
 
     if (!stored) {
         return jsonRes({ error: 'کد اشتباه یا منقضی‌شده است' }, 400);
@@ -201,10 +222,10 @@ async function handleVerifyCode(request, env) {
         if (attempts >= 5) {
             update.lockedUntilMs = Date.now() + 15 * 60 * 1000; // ۱۵ دقیقه قفل
         }
-        await firestoreUpdate(env, `authCodes/${docId}`, update);
+        await fsUpdate(env, `authCodes/${docId}`, update);
         return jsonRes({ error: 'کد اشتباه یا منقضی‌شده است' }, 400);
     }
-    await firestoreDelete(env, `authCodes/${docId}`);
+    await fsDelete(env, `authCodes/${docId}`);
 
     const ticket = await signTicket(env.WORKER_AUTH_SECRET, {
         email: emailLower,
@@ -540,7 +561,7 @@ async function handleFsProxy(request, env) {
 
     try {
         if (op === 'list') {
-            // کش کوتاه‌مدت (۴ ثانیه) روی خروجی هر کالکشن - این تنها با تغییر همین فایل (بدون دست‌زدن
+            // کش کوتاه‌مدت (۸ ثانیه) روی خروجی هر کالکشن - این تنها با تغییر همین فایل (بدون دست‌زدن
             // به index.html) مصرف Firestore رو به‌شدت کم می‌کنه: وقتی چند کاربر/تب همزمان باز باشن
             // و هرکدوم هر چند ثانیه یه‌بار poll بزنن، همه‌شون از یه پاسخ مشترک تازه استفاده می‌کنن
             // به‌جای اینکه هرکدوم جدا یه خوندن کامل (تا ۳۰۰ سند) از Firestore بزنن.
@@ -553,28 +574,28 @@ async function handleFsProxy(request, env) {
                 return cached;
             }
 
-            const items = await firestoreList(env, collection, { orderByField, orderByDir });
+            const items = await fsList(env, collection, { orderByField, orderByDir });
             const response = jsonRes({ items });
             const cacheableResponse = new Response(response.clone().body, {
                 status: response.status,
-                headers: { ...Object.fromEntries(response.headers), 'Cache-Control': 'public, max-age=4' }
+                headers: { ...Object.fromEntries(response.headers), 'Cache-Control': 'public, max-age=8' }
             });
             await cache.put(cacheKey, cacheableResponse);
             return response;
         }
         if (op === 'get') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
-            const item = await firestoreGet(env, `${collection}/${docId}`);
+            const item = await fsGet(env, `${collection}/${docId}`);
             return jsonRes({ item });
         }
         if (op === 'set') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
-            await firestoreSet(env, `${collection}/${docId}`, data || {});
+            await fsSet(env, `${collection}/${docId}`, data || {});
             return jsonRes({ ok: true });
         }
         if (op === 'update') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
-            await firestoreUpdate(env, `${collection}/${docId}`, data || {});
+            await fsUpdate(env, `${collection}/${docId}`, data || {});
 
             // نوتیفیکیشن: وقتی ادمین وضعیت عضویت یک کاربر رو تغییر می‌ده (تایید/رد)
             if (collection === 'users' && data && (data.status === 'approved' || data.status === 'rejected')) {
@@ -592,11 +613,11 @@ async function handleFsProxy(request, env) {
         }
         if (op === 'delete') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
-            await firestoreDelete(env, `${collection}/${docId}`);
+            await fsDelete(env, `${collection}/${docId}`);
             return jsonRes({ ok: true });
         }
         if (op === 'add') {
-            const result = await firestoreAdd(env, collection, data || {});
+            const result = await fsAdd(env, collection, data || {});
 
             // نوتیفیکیشن: پیام جدید در ترد گفتگوی ویراستار - فقط وقتی فرستنده صاحب ترد نباشه
             const fsParts = String(collection).split('/').filter(Boolean);
@@ -630,6 +651,36 @@ async function handleFsProxy(request, env) {
     } catch (e) {
         return jsonRes({ error: e.message || 'خطای Firestore' }, 500);
     }
+}
+
+// =====================================================================
+// مهاجرت یک‌بارمصرف: کپی کردن دیتای فعلیِ کالکشن‌های D1_TOP_LEVEL_COLLECTIONS
+// از Firestore به D1. فقط ادمین می‌تونه صداش بزنه. بعد از اجرای موفق و چک کردن
+// نتیجه، می‌تونی این تابع و مسیرش رو از worker.js حذف کنی.
+// نکته: کالکشن‌های تودرتو (taskDeliveries/{id}/threads/{uid}/messages و مشابه)
+// چون شناسه‌ی سطح بالاشون (task id، uid) از قبل معلوم نیست، شامل این مهاجرت خودکار
+// نمی‌شن؛ اگه لازم بود، بعداً برات یه نسخه‌ی مخصوص همون‌ها رو می‌نویسم.
+// =====================================================================
+async function handleMigrateToD1(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+
+    const results = {};
+    for (const collection of D1_TOP_LEVEL_COLLECTIONS) {
+        try {
+            const items = await firestoreList(env, collection, {});
+            let copied = 0;
+            for (const item of items) {
+                const { id, ...fields } = item;
+                await d1Set(env, `${collection}/${id}`, fields);
+                copied++;
+            }
+            results[collection] = { ok: true, copied };
+        } catch (e) {
+            results[collection] = { ok: false, error: e.message || String(e) };
+        }
+    }
+    return jsonRes({ results });
 }
 
 // =====================================================================
