@@ -18,7 +18,7 @@ import { signTicket, verifyTicket } from './lib-ticket.js';
 const D1_TOP_LEVEL_COLLECTIONS = new Set([
     'announcements', 'notifications', 'notifDismissed', 'subjects',
     'collabCalls', 'tasks', 'taskDeliveries', 'publicChat', 'anonChat',
-    'adminChat', 'reports', 'authCodes'
+    'adminChat', 'reports', 'authCodes', 'sessions'
 ]);
 function usesD1(path) {
     return D1_TOP_LEVEL_COLLECTIONS.has(String(path).split('/')[0]);
@@ -53,6 +53,8 @@ export default {
             else if (p === '/api/auth/session-status' && request.method === 'POST') response = await handleSessionStatus(request, env);
             else if (p === '/api/fs' && request.method === 'POST') response = await handleFsProxy(request, env);
             else if (p === '/api/admin/migrate-to-d1' && request.method === 'POST') response = await handleMigrateToD1(request, env);
+            else if (p === '/api/account/sessions' && request.method === 'GET') response = await handleListSessions(request, env);
+            else if (p === '/api/account/sessions/revoke' && request.method === 'POST') response = await handleRevokeSession(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
         } catch (e) {
             response = jsonRes({ error: e.message || 'خطای داخلی سرور' }, 500);
@@ -156,7 +158,55 @@ async function getSession(request, env) {
     const auth = request.headers.get('Authorization') || '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!token) return null;
-    return await verifyTicket(env.WORKER_AUTH_SECRET, token);
+    const payload = await verifyTicket(env.WORKER_AUTH_SECRET, token);
+    if (!payload) return null;
+    // نشست‌های قدیمی‌تر (بدون sid) هنوز کار می‌کنن؛ فقط نشست‌های جدید قابل ابطال‌اند
+    if (payload.sid) {
+        const sessionDoc = await fsGet(env, `sessions/${payload.sid}`);
+        if (!sessionDoc || sessionDoc.revoked) return null;
+    }
+    return payload;
+}
+
+// یک «نشست قابل‌ابطال» می‌سازه: هم توکن امضاشده رو برمی‌گردونه، هم یک رکورد در D1
+// ذخیره می‌کنه تا بشه بعداً از پروفایل کاربر لیستش کرد یا باطلش کرد.
+async function createSession(env, request, payload) {
+    const sid = crypto.randomUUID();
+    const exp = payload.exp || (Date.now() + SESSION_TTL_MS);
+    const ticket = await signTicket(env.WORKER_AUTH_SECRET, { ...payload, sid, exp });
+    await fsSet(env, `sessions/${sid}`, {
+        uid: payload.uid || null,
+        email: payload.email || null,
+        kind: payload.kind || null,
+        isAdmin: !!payload.isAdmin,
+        userAgent: request.headers.get('User-Agent') || '',
+        createdAtMs: Date.now(),
+        exp,
+        revoked: false
+    });
+    return ticket;
+}
+
+async function handleListSessions(request, env) {
+    const session = await getSession(request, env);
+    if (!session) return jsonRes({ error: 'نشست نامعتبر است' }, 401);
+    const all = await fsList(env, 'sessions', {});
+    const mine = all
+        .filter(s => s.uid && s.uid === session.uid && !s.revoked && (!s.exp || s.exp > Date.now()))
+        .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
+        .map(s => ({ id: s.id, userAgent: s.userAgent || '', createdAtMs: s.createdAtMs || 0, current: s.id === session.sid }));
+    return jsonRes({ sessions: mine });
+}
+
+async function handleRevokeSession(request, env) {
+    const session = await getSession(request, env);
+    if (!session) return jsonRes({ error: 'نشست نامعتبر است' }, 401);
+    const { sessionId } = await request.json();
+    if (!sessionId) return jsonRes({ error: 'sessionId لازم است' }, 400);
+    const target = await fsGet(env, `sessions/${sessionId}`);
+    if (!target || target.uid !== session.uid) return jsonRes({ error: 'نشست یافت نشد' }, 404);
+    await fsUpdate(env, `sessions/${sessionId}`, { revoked: true, revokedAtMs: Date.now() });
+    return jsonRes({ ok: true });
 }
 
 // =====================================================================
@@ -257,7 +307,7 @@ async function handleCompleteLogin(request, env) {
 
     await firestoreSet(env, `verifiedEmails/${uid}`, { email: payload.email, isAdmin, verifiedAtMs: Date.now() });
 
-    const session = await signTicket(env.WORKER_AUTH_SECRET, {
+    const session = await createSession(env, request, {
         uid, email: payload.email, isAdmin, kind: 'email', editorId: editorId || null,
         exp: Date.now() + SESSION_TTL_MS
     });
@@ -288,7 +338,7 @@ async function handleRegister(request, env) {
         profileCompleted: true, createdAtMs: existing ? existing.createdAtMs : Date.now()
     });
 
-    const session = await signTicket(env.WORKER_AUTH_SECRET, {
+    const session = await createSession(env, request, {
         uid, kind: 'password', email: emailLower, name: chatName,
         isPending: true, exp: Date.now() + SESSION_TTL_MS
     });
@@ -312,7 +362,7 @@ async function handleLogin(request, env) {
     const isPending = user.status !== 'approved';
     const isAdmin = emailLower === ADMIN_EMAIL;
     const editorId = isAdmin ? null : await findEditorByEmail(env, emailLower);
-    const session = await signTicket(env.WORKER_AUTH_SECRET, {
+    const session = await createSession(env, request, {
         uid, kind: 'password', email: emailLower, name: user.chatName || user.name,
         isAdmin, editorId: editorId || null, isPending, exp: Date.now() + SESSION_TTL_MS
     });
@@ -328,7 +378,7 @@ async function handleSessionStatus(request, env) {
 
     if (session.kind === 'email' || session.kind === 'google') {
         const editorId = session.isAdmin ? null : await findEditorByEmail(env, session.email);
-        const newSession = await signTicket(env.WORKER_AUTH_SECRET, {
+        const newSession = await createSession(env, request, {
             uid: session.uid, email: session.email, isAdmin: session.isAdmin, kind: session.kind,
             editorId: editorId || null, exp: Date.now() + SESSION_TTL_MS
         });
@@ -348,7 +398,7 @@ async function handleSessionStatus(request, env) {
     if (user.status === 'approved') {
         const isAdmin = session.email === ADMIN_EMAIL;
         const editorId = isAdmin ? null : await findEditorByEmail(env, session.email);
-        const newSession = await signTicket(env.WORKER_AUTH_SECRET, {
+        const newSession = await createSession(env, request, {
             uid: session.uid, kind: 'password', email: session.email, name: user.chatName || user.name,
             isAdmin, editorId: editorId || null, isPending: false, exp: Date.now() + SESSION_TTL_MS
         });
@@ -839,7 +889,7 @@ async function handleGoogleCallback(request, env) {
             });
         }
 
-        const session = await signTicket(env.WORKER_AUTH_SECRET, {
+        const session = await createSession(env, request, {
             uid, email: emailLower, isAdmin, kind: 'google', editorId: editorId || null,
             exp: Date.now() + SESSION_TTL_MS
         });
@@ -886,7 +936,7 @@ async function handleGoogleVerifyToken(request, env) {
             });
         }
 
-        const session = await signTicket(env.WORKER_AUTH_SECRET, {
+        const session = await createSession(env, request, {
             uid, email: emailLower, isAdmin, kind: 'google', editorId: editorId || null,
             exp: Date.now() + SESSION_TTL_MS
         });
