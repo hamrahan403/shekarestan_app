@@ -10,5 +10,12 @@
   },
   "triggers": {
     "crons": ["*/15 * * * *"]
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shekarestan-db",
+      "database_id": "5ffeccaf-5b64-4dfe-9f3b-2dea11ccfafa"
+    }
+  ]
 }
