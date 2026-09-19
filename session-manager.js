@@ -44,6 +44,58 @@
             icon.textContent = opening ? '▴' : '▾';
             if (opening) await renderSessionsList();
         });
+
+        injectPasswordSection(box);
+    }
+
+    function injectPasswordSection(afterEl) {
+        if (document.getElementById('password-set-section')) return;
+
+        const box = document.createElement('div');
+        box.id = 'password-set-section';
+        box.style.cssText = 'margin-top:14px;background:var(--cream);border:1px solid var(--beige-dark);border-radius:14px;padding:12px;';
+        box.innerHTML = `
+            <strong style="font-size:0.85rem;">🔑 تعیین رمز عبور برای ورود</strong>
+            <div style="color:var(--brown-light);font-size:0.7rem;margin-top:4px;">
+                با این کار می‌تونی دفعات بعد با همین ایمیل و یه رمز عبور هم وارد بشی، بدون گوگل یا کد ایمیلی.
+            </div>
+            <input type="password" id="new-password-input" placeholder="رمز عبور جدید (حداقل ۶ کاراکتر)"
+                style="width:100%;margin-top:8px;padding:8px;border-radius:10px;border:1px solid var(--beige-dark);font-size:0.8rem;box-sizing:border-box;" />
+            <input type="password" id="new-password-confirm" placeholder="تکرار رمز عبور"
+                style="width:100%;margin-top:6px;padding:8px;border-radius:10px;border:1px solid var(--beige-dark);font-size:0.8rem;box-sizing:border-box;" />
+            <button id="set-password-btn" type="button"
+                style="width:100%;margin-top:8px;padding:9px;border-radius:12px;border:none;background:var(--terracotta);color:#fff;cursor:pointer;font-size:0.82rem;">
+                ذخیره رمز عبور
+            </button>
+        `;
+        afterEl.insertAdjacentElement('afterend', box);
+
+        document.getElementById('set-password-btn').addEventListener('click', async () => {
+            const pw = document.getElementById('new-password-input').value;
+            const pw2 = document.getElementById('new-password-confirm').value;
+            if (!pw || pw.length < 6) { showToast('⚠️ رمز عبور باید حداقل ۶ کاراکتر باشد'); return; }
+            if (pw !== pw2) { showToast('⚠️ دو رمز عبور یکسان نیستند'); return; }
+            const btn = document.getElementById('set-password-btn');
+            btn.disabled = true;
+            try {
+                const token = getSessionToken();
+                const res = await fetch('/api/account/set-password', {
+                    method: 'POST',
+                    cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                    body: JSON.stringify({ password: pw })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error) throw new Error(data.error || 'خطا در ذخیره‌ی رمز عبور');
+                document.getElementById('new-password-input').value = '';
+                document.getElementById('new-password-confirm').value = '';
+                showToast('✅ رمز عبور ذخیره شد؛ از این به بعد می‌تونی با ایمیل و همین رمز وارد بشی');
+            } catch (e) {
+                showToast('⚠️ ذخیره‌ی رمز عبور ناموفق بود: ' + (e.message || ''));
+            } finally {
+                btn.disabled = false;
+            }
+        });
     }
 
     async function renderSessionsList() {

@@ -55,6 +55,7 @@ export default {
             else if (p === '/api/admin/migrate-to-d1' && request.method === 'POST') response = await handleMigrateToD1(request, env);
             else if (p === '/api/account/sessions' && request.method === 'GET') response = await handleListSessions(request, env);
             else if (p === '/api/account/sessions/revoke' && request.method === 'POST') response = await handleRevokeSession(request, env);
+            else if (p === '/api/account/set-password' && request.method === 'POST') response = await handleSetPassword(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
         } catch (e) {
             response = jsonRes({ error: e.message || 'خطای داخلی سرور' }, 500);
@@ -206,6 +207,31 @@ async function handleRevokeSession(request, env) {
     const target = await fsGet(env, `sessions/${sessionId}`);
     if (!target || target.uid !== session.uid) return jsonRes({ error: 'نشست یافت نشد' }, 404);
     await fsUpdate(env, `sessions/${sessionId}`, { revoked: true, revokedAtMs: Date.now() });
+    return jsonRes({ ok: true });
+}
+
+// به کاربری که با گوگل یا کد ایمیلی وارد شده اجازه می‌ده یه رمز عبور برای همون ایمیلش
+// تعیین کنه، تا دفعات بعد بتونه با «ایمیل + رمز عبور» هم وارد بشه.
+async function handleSetPassword(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.email) return jsonRes({ error: 'نشست نامعتبر است' }, 401);
+    const { password } = await request.json();
+    if (!password || password.length < 6) return jsonRes({ error: 'رمز عبور باید حداقل ۶ کاراکتر باشد' }, 400);
+
+    const passwordHash = await hashPassword(password);
+    const existing = await firestoreGet(env, `users/${session.uid}`);
+
+    if (existing) {
+        await firestoreUpdate(env, `users/${session.uid}`, { passwordHash });
+    } else {
+        // کاربری که فقط با گوگل/کد ایمیلی وارد شده و تا الان سند users نداشته
+        await firestoreSet(env, `users/${session.uid}`, {
+            email: session.email, passwordHash,
+            chatName: session.name || session.email, name: session.name || session.email,
+            authType: 'password-added', status: 'approved', profileCompleted: true,
+            createdAtMs: Date.now()
+        });
+    }
     return jsonRes({ ok: true });
 }
 
