@@ -53,9 +53,11 @@
         try {
             const token = getSessionToken();
             const res = await fetch('/api/account/sessions', {
+                cache: 'no-store',
                 headers: { Authorization: 'Bearer ' + token }
             });
             const data = await res.json().catch(() => ({}));
+            console.log('[sessions] list response:', res.status, data);
             if (!res.ok || data.error) throw new Error(data.error || 'خطا در دریافت نشست‌ها');
 
             const sessions = data.sessions || [];
@@ -90,10 +92,12 @@
             const token = getSessionToken();
             const res = await fetch('/api/account/sessions/revoke', {
                 method: 'POST',
+                cache: 'no-store',
                 headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
                 body: JSON.stringify({ sessionId })
             });
             const data = await res.json().catch(() => ({}));
+            console.log('[sessions] revoke response:', res.status, data);
             if (!res.ok || data.error) throw new Error(data.error || 'خطا در ابطال نشست');
             showToast('✅ نشست باطل شد');
             await renderSessionsList();
