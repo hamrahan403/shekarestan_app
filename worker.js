@@ -18,7 +18,7 @@ import { signTicket, verifyTicket } from './lib-ticket.js';
 const D1_TOP_LEVEL_COLLECTIONS = new Set([
     'announcements', 'notifications', 'notifDismissed', 'subjects',
     'collabCalls', 'tasks', 'taskDeliveries', 'publicChat', 'anonChat',
-    'adminChat', 'reports', 'authCodes', 'sessions'
+    'adminChat', 'reports', 'authCodes', 'sessions', 'notes', 'videos'
 ]);
 function usesD1(path) {
     return D1_TOP_LEVEL_COLLECTIONS.has(String(path).split('/')[0]);
@@ -982,4 +982,3 @@ async function handleGoogleVerifyToken(request, env) {
         return jsonRes({ error: 'ورود با گوگل ناموفق بود' }, 500);
     }
 }
-
