@@ -1076,4 +1076,3 @@ async function handleGoogleVerifyToken(request, env) {
         return jsonRes({ error: 'ورود با گوگل ناموفق بود' }, 500);
     }
 }
-
