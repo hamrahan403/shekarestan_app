@@ -56,6 +56,7 @@ export default {
             else if (p === '/api/account/sessions' && request.method === 'GET') response = await handleListSessions(request, env);
             else if (p === '/api/account/sessions/revoke' && request.method === 'POST') response = await handleRevokeSession(request, env);
             else if (p === '/api/account/set-password' && request.method === 'POST') response = await handleSetPassword(request, env);
+            else if (p === '/api/account/info' && request.method === 'GET') response = await handleAccountInfo(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
         } catch (e) {
             response = jsonRes({ error: e.message || 'خطای داخلی سرور' }, 500);
@@ -222,7 +223,10 @@ async function handleSetPassword(request, env) {
     const existing = await firestoreGet(env, `users/${session.uid}`);
 
     if (existing) {
-        await firestoreUpdate(env, `users/${session.uid}`, { passwordHash });
+        // اگه از قبل سند users داشته ولی status:'approved' نداشته (چون وقتی با گوگل/کد
+        // ایمیلی وارد شده بود اصلاً نیازی به تاییدیه نبود)، همینجا هم تاییدش می‌کنیم؛
+        // وگرنه بعد از ورود با رمز، isPending=true می‌شد و چت/گروه‌ها قفل می‌موند.
+        await firestoreUpdate(env, `users/${session.uid}`, { passwordHash, status: 'approved' });
     } else {
         // کاربری که فقط با گوگل/کد ایمیلی وارد شده و تا الان سند users نداشته
         await firestoreSet(env, `users/${session.uid}`, {
@@ -233,6 +237,13 @@ async function handleSetPassword(request, env) {
         });
     }
     return jsonRes({ ok: true });
+}
+
+async function handleAccountInfo(request, env) {
+    const session = await getSession(request, env);
+    if (!session) return jsonRes({ error: 'نشست نامعتبر است' }, 401);
+    const user = session.uid ? await firestoreGet(env, `users/${session.uid}`) : null;
+    return jsonRes({ hasPassword: !!(user && user.passwordHash) });
 }
 
 // =====================================================================
