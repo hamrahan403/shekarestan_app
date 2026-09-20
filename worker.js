@@ -57,6 +57,7 @@ export default {
             else if (p === '/api/account/sessions/revoke' && request.method === 'POST') response = await handleRevokeSession(request, env);
             else if (p === '/api/account/set-password' && request.method === 'POST') response = await handleSetPassword(request, env);
             else if (p === '/api/account/info' && request.method === 'GET') response = await handleAccountInfo(request, env);
+            else if (p === '/api/admin/capacity-check' && request.method === 'GET') response = await handleCapacityCheck(request, env);
             else response = await env.ASSETS.fetch(request); // فایل‌های استاتیک (index.html و ...)
         } catch (e) {
             response = jsonRes({ error: e.message || 'خطای داخلی سرور' }, 500);
@@ -237,6 +238,51 @@ async function handleSetPassword(request, env) {
         });
     }
     return jsonRes({ ok: true });
+}
+
+// محاسبه‌ی واقعی ظرفیت - بر اساس تعداد واقعی اسناد توی D1، نه حدس. فقط ادمین.
+async function handleCapacityCheck(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+
+    const { results } = await env.DB.prepare(
+        `SELECT collection, COUNT(*) as cnt FROM fs_documents GROUP BY collection`
+    ).all();
+    const counts = {};
+    for (const row of results || []) counts[row.collection] = row.cnt;
+
+    // فاصله‌ی poll هر گروه از کالکشن‌ها (ثانیه) - مطابق چیزی که تو index.html هست
+    const pollGroups = [
+        { name: 'محتوا (notes + videos + collabCalls + announcements + subjects)', collections: ['notes', 'videos', 'collabCalls', 'announcements', 'subjects'], intervalSec: 30 },
+        { name: 'نوتیفیکیشن‌ها', collections: ['notifications'], intervalSec: 15 },
+        { name: 'تسک‌ها', collections: ['tasks'], intervalSec: 20 },
+        { name: 'چت عمومی', collections: ['publicChat'], intervalSec: 10 },
+    ];
+
+    let readsPerHourPerActiveUser = 0;
+    const breakdown = pollGroups.map(g => {
+        const docCount = g.collections.reduce((sum, c) => sum + (counts[c] || 0), 0);
+        const pollsPerHour = 3600 / g.intervalSec;
+        const readsPerHour = docCount * pollsPerHour;
+        readsPerHourPerActiveUser += readsPerHour;
+        return { name: g.name, docCount, intervalSec: g.intervalSec, readsPerHour: Math.round(readsPerHour) };
+    });
+
+    const D1_DAILY_FREE_LIMIT = 5000000;
+    const readsPerDayPerActiveUser = readsPerHourPerActiveUser * 24;
+    const maxSustainedAlwaysOnUsers = readsPerDayPerActiveUser > 0
+        ? Math.floor(D1_DAILY_FREE_LIMIT / readsPerDayPerActiveUser)
+        : null;
+
+    return jsonRes({
+        docCounts: counts,
+        breakdown,
+        readsPerHourPerActiveUser: Math.round(readsPerHourPerActiveUser),
+        readsPerDayPerActiveUser: Math.round(readsPerDayPerActiveUser),
+        d1DailyFreeLimit: D1_DAILY_FREE_LIMIT,
+        maxSustainedAlwaysOnUsers,
+        note: 'maxSustainedAlwaysOnUsers یعنی چند نفر می‌تونن ۲۴ ساعته تب رو باز نگه دارن بدون رسیدن به سقف - این خیلی محافظه‌کارانه‌ست، چون کاربر واقعی این‌قدر تب رو باز نمی‌ذاره.'
+    });
 }
 
 async function handleAccountInfo(request, env) {
@@ -982,3 +1028,4 @@ async function handleGoogleVerifyToken(request, env) {
         return jsonRes({ error: 'ورود با گوگل ناموفق بود' }, 500);
     }
 }
+
