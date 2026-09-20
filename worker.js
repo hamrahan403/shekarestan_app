@@ -18,7 +18,7 @@ import { signTicket, verifyTicket } from './lib-ticket.js';
 const D1_TOP_LEVEL_COLLECTIONS = new Set([
     'announcements', 'notifications', 'notifDismissed', 'subjects',
     'collabCalls', 'tasks', 'taskDeliveries', 'publicChat', 'anonChat',
-    'adminChat', 'reports', 'authCodes', 'sessions', 'notes', 'videos'
+    'adminChat', 'reports', 'authCodes', 'sessions', 'notes', 'videos', 'loginAttempts'
 ]);
 function usesD1(path) {
     return D1_TOP_LEVEL_COLLECTIONS.has(String(path).split('/')[0]);
@@ -55,6 +55,7 @@ export default {
             else if (p === '/api/admin/migrate-to-d1' && request.method === 'POST') response = await handleMigrateToD1(request, env);
             else if (p === '/api/account/sessions' && request.method === 'GET') response = await handleListSessions(request, env);
             else if (p === '/api/account/sessions/revoke' && request.method === 'POST') response = await handleRevokeSession(request, env);
+            else if (p === '/api/account/sessions/revoke-others' && request.method === 'POST') response = await handleRevokeOtherSessions(request, env);
             else if (p === '/api/account/set-password' && request.method === 'POST') response = await handleSetPassword(request, env);
             else if (p === '/api/account/info' && request.method === 'GET') response = await handleAccountInfo(request, env);
             else if (p === '/api/admin/capacity-check' && request.method === 'GET') response = await handleCapacityCheck(request, env);
@@ -201,6 +202,17 @@ async function handleListSessions(request, env) {
     return jsonRes({ sessions: mine });
 }
 
+async function handleRevokeOtherSessions(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+    const all = await fsList(env, 'sessions', {});
+    const others = all.filter(s => s.uid === session.uid && s.id !== session.sid && !s.revoked);
+    for (const s of others) {
+        await fsUpdate(env, `sessions/${s.id}`, { revoked: true, revokedAtMs: Date.now() });
+    }
+    return jsonRes({ ok: true, revokedCount: others.length });
+}
+
 async function handleRevokeSession(request, env) {
     const session = await getSession(request, env);
     if (!session) return jsonRes({ error: 'نشست نامعتبر است' }, 401);
@@ -307,12 +319,29 @@ async function handleRequestCode(request, env) {
         const minutesLeft = Math.ceil((existing.lockedUntilMs - Date.now()) / 60000);
         return jsonRes({ error: `تعداد تلاش‌های اشتباه زیاد بود؛ ${minutesLeft} دقیقه دیگر دوباره امتحان کنید` }, 429);
     }
+    // فاصله‌ی حداقلی بین دو درخواست کد - برای جلوگیری از اسپم اینباکس و مصرف بی‌مورد سهمیه‌ی ایمیل
+    if (existing && existing.createdAtMs && Date.now() - existing.createdAtMs < 60 * 1000) {
+        const secondsLeft = Math.ceil((60 * 1000 - (Date.now() - existing.createdAtMs)) / 1000);
+        return jsonRes({ error: `لطفاً ${secondsLeft} ثانیه دیگر دوباره امتحان کنید` }, 429);
+    }
+    // سقف نرم: بیش از ۵ بار در یک ساعت -> قفل موقت
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const sendCountInWindow = existing && existing.windowStartMs > hourAgo ? (existing.sendCount || 0) + 1 : 1;
+    const windowStartMs = existing && existing.windowStartMs > hourAgo ? existing.windowStartMs : Date.now();
+    if (sendCountInWindow > 5) {
+        await fsSet(env, `authCodes/${docId}`, {
+            email: emailLower, code: existing.code, createdAtMs: existing.createdAtMs, expiresAtMs: existing.expiresAtMs,
+            windowStartMs, sendCount: sendCountInWindow, lockedUntilMs: Date.now() + 30 * 60 * 1000
+        });
+        return jsonRes({ error: 'تعداد درخواست‌های کد زیاد بود؛ ۳۰ دقیقه دیگر دوباره امتحان کنید' }, 429);
+    }
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
     await fsSet(env, `authCodes/${docId}`, {
         email: emailLower, code,
         createdAtMs: Date.now(),
-        expiresAtMs: Date.now() + 10 * 60 * 1000
+        expiresAtMs: Date.now() + 10 * 60 * 1000,
+        windowStartMs, sendCount: sendCountInWindow
     });
 
     const emailRes = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -433,12 +462,31 @@ async function handleLogin(request, env) {
     const emailLower = (email || '').trim().toLowerCase();
     if (!emailLower || !password) return jsonRes({ error: 'ایمیل و رمز عبور را وارد کنید' }, 400);
 
+    // محدودیت تلاش‌های ناموفق: حداکثر ۵ تلاش، بعدش ۱۵ دقیقه قفل - برای جلوگیری از brute-force
+    const attemptsDocId = safeId(emailLower);
+    const attempts = await fsGet(env, `loginAttempts/${attemptsDocId}`);
+    if (attempts && attempts.lockedUntilMs && Date.now() < attempts.lockedUntilMs) {
+        const minutesLeft = Math.ceil((attempts.lockedUntilMs - Date.now()) / 60000);
+        return jsonRes({ error: `تعداد تلاش‌های اشتباه زیاد بود؛ ${minutesLeft} دقیقه دیگر دوباره امتحان کنید` }, 429);
+    }
+
     const uid = 'u_' + (await sha256Hex(emailLower)).slice(0, 28);
     const user = await firestoreGet(env, `users/${uid}`);
     if (!user || !user.passwordHash) return jsonRes({ error: 'حساب کاربری با این ایمیل یافت نشد' }, 400);
 
     const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) return jsonRes({ error: 'رمز عبور اشتباه است' }, 400);
+    if (!ok) {
+        const failCount = (attempts && attempts.failCount || 0) + 1;
+        const update = { email: emailLower, failCount };
+        if (failCount >= 5) {
+            update.lockedUntilMs = Date.now() + 15 * 60 * 1000;
+            update.failCount = 0;
+        }
+        await fsSet(env, `loginAttempts/${attemptsDocId}`, update);
+        return jsonRes({ error: 'رمز عبور اشتباه است' }, 400);
+    }
+    // ورود موفق: سابقه‌ی تلاش‌های ناموفق قبلی پاک بشه
+    if (attempts) await fsDelete(env, `loginAttempts/${attemptsDocId}`);
 
     if (user.status === 'rejected') return jsonRes({ error: 'عضویت شما توسط مدیر رد شده است' }, 403);
 
