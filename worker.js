@@ -18,7 +18,7 @@ import { signTicket, verifyTicket } from './lib-ticket.js';
 const D1_TOP_LEVEL_COLLECTIONS = new Set([
     'announcements', 'notifications', 'notifDismissed', 'subjects',
     'collabCalls', 'tasks', 'taskDeliveries', 'publicChat', 'anonChat',
-    'adminChat', 'reports', 'authCodes', 'sessions', 'notes', 'videos', 'loginAttempts'
+    'adminChat', 'reports', 'authCodes', 'sessions', 'notes', 'videos', 'loginAttempts', 'references'
 ]);
 function usesD1(path) {
     return D1_TOP_LEVEL_COLLECTIONS.has(String(path).split('/')[0]);
@@ -553,7 +553,7 @@ async function isTaskAssignee(env, uid) {
 
 // کالکشن‌هایی که فقط ادمین حق نوشتن روشون رو داره (بیشتر محتوای اپ)
 const ADMIN_ONLY_WRITE_COLLECTIONS = new Set([
-    'notes', 'videos', 'subjects', 'extraSubjects', 'announcements', 'collabCalls', 'editors', 'taskAssignees'
+    'notes', 'videos', 'subjects', 'extraSubjects', 'announcements', 'collabCalls', 'editors', 'taskAssignees', 'references'
 ]);
 
 async function checkFsPermission(env, session, op, collection, docId, data) {
@@ -1076,3 +1076,4 @@ async function handleGoogleVerifyToken(request, env) {
         return jsonRes({ error: 'ورود با گوگل ناموفق بود' }, 500);
     }
 }
+
