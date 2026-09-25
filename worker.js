@@ -40,7 +40,8 @@ export default {
         let response;
 
         try {
-            if (p === '/telegram-upload' && request.method === 'POST') response = await handleTelegramUpload(request, env);
+            if (p === '/download-proxy' && request.method === 'GET') response = await handleDownloadProxy(request, env);
+            else if (p === '/telegram-upload' && request.method === 'POST') response = await handleTelegramUpload(request, env);
             else if (p === '/telegram-file' && request.method === 'GET') response = await handleTelegramFileProxy(request, env);
             else if (p === '/api/auth/request-code' && request.method === 'POST') response = await handleRequestCode(request, env);
             else if (p === '/api/auth/verify-code' && request.method === 'POST') response = await handleVerifyCode(request, env);
@@ -867,6 +868,44 @@ async function handleMigrateToD1(request, env) {
 // =====================================================================
 // آپلود جزوه/عکس/فیلم به تلگرام (بدون تغییر نسبت به قبل)
 // =====================================================================
+// پروکسی دانلود برای لینک‌های خارجی: چون فایل از دامنه‌ی خودِ سایت سرو میشه، صفت
+// download مرورگر واقعاً اجرا میشه و به‌جای باز کردن PDF داخل تب، مجبور به دانلود میشه.
+async function handleDownloadProxy(request, env) {
+    const url = new URL(request.url);
+    const target = url.searchParams.get('url');
+    const rawName = url.searchParams.get('name') || 'file';
+    if (!target) return jsonRes({ error: 'آدرس فایل مشخص نشده است' }, 400);
+
+    let parsed;
+    try { parsed = new URL(target); } catch (e) { return jsonRes({ error: 'آدرس نامعتبر است' }, 400); }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return jsonRes({ error: 'پروتکل غیرمجاز' }, 400);
+    }
+    const host = parsed.hostname.toLowerCase();
+    const isPrivate = host === 'localhost' || host.startsWith('127.') || host.startsWith('0.') ||
+        host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    if (isPrivate) return jsonRes({ error: 'آدرس غیرمجاز' }, 400);
+
+    let upstream;
+    try {
+        upstream = await fetch(parsed.toString(), { redirect: 'follow' });
+    } catch (e) {
+        return jsonRes({ error: 'دریافت فایل ناموفق بود' }, 502);
+    }
+    if (!upstream.ok || !upstream.body) return jsonRes({ error: 'دریافت فایل ناموفق بود' }, 502);
+
+    const len = upstream.headers.get('content-length');
+    if (len && Number(len) > 30 * 1024 * 1024) return jsonRes({ error: 'حجم فایل بیش از حد مجاز است' }, 413);
+
+    const safeName = String(rawName).replace(/["\r\n]/g, '').slice(0, 150) || 'file';
+    const headers = new Headers();
+    headers.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+    headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
+    headers.set('Cache-Control', 'private, max-age=0');
+    return new Response(upstream.body, { status: 200, headers });
+}
+
 async function handleTelegramUpload(request, env) {
     const BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
     const CHAT_ID = env.TELEGRAM_CHAT_ID;
