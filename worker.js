@@ -41,6 +41,9 @@ export default {
 
         try {
             if (p === '/download-proxy' && request.method === 'GET') response = await handleDownloadProxy(request, env);
+            else if (p === '/r2-upload' && request.method === 'POST') response = await handleR2Upload(request, env);
+            else if (p === '/r2-file' && request.method === 'GET') response = await handleR2File(request, env);
+            else if (p === '/arvan-presign' && request.method === 'GET') response = await handleArvanPresign(request, env);
             else if (p === '/telegram-upload' && request.method === 'POST') response = await handleTelegramUpload(request, env);
             else if (p === '/telegram-file' && request.method === 'GET') response = await handleTelegramFileProxy(request, env);
             else if (p === '/api/auth/request-code' && request.method === 'POST') response = await handleRequestCode(request, env);
@@ -721,6 +724,20 @@ async function sendExpoPush(pushToken, title, body, data) {
     }
 }
 
+// بعد از هر نوشتن (add/set/update/delete)، جواب کش‌شده‌ی list همون کالکشن رو پاک می‌کنه
+// تا بلافاصله بعد از یه تغییر، جواب قدیمی (خالی/بدون آخرین آیتم) کش برنگرده.
+async function invalidateListCache(collection) {
+    const cache = caches.default;
+    const variants = [
+        ['', ''], ['createdAtMs', 'asc'], ['createdAtMs', 'desc'],
+        ['lastMessageAtMs', 'desc'], ['lastMessageAtMs', 'asc']
+    ];
+    for (const [field, dir] of variants) {
+        const key = new Request(`https://fs-list-cache.internal/${encodeURIComponent(collection)}?orderBy=${encodeURIComponent(field)}:${dir}`);
+        await cache.delete(key);
+    }
+}
+
 async function handleFsProxy(request, env) {
     const session = await getSession(request, env);
     const { op, collection, docId, data, orderByField, orderByDir } = await request.json();
@@ -773,11 +790,13 @@ async function handleFsProxy(request, env) {
         if (op === 'set') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
             await fsSet(env, `${collection}/${docId}`, data || {});
+            await invalidateListCache(collection);
             return jsonRes({ ok: true });
         }
         if (op === 'update') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
             await fsUpdate(env, `${collection}/${docId}`, data || {});
+            await invalidateListCache(collection);
 
             // نوتیفیکیشن: وقتی ادمین وضعیت عضویت یک کاربر رو تغییر می‌ده (تایید/رد)
             if (collection === 'users' && data && (data.status === 'approved' || data.status === 'rejected')) {
@@ -796,10 +815,12 @@ async function handleFsProxy(request, env) {
         if (op === 'delete') {
             if (!docId) return jsonRes({ error: 'docId لازم است' }, 400);
             await fsDelete(env, `${collection}/${docId}`);
+            await invalidateListCache(collection);
             return jsonRes({ ok: true });
         }
         if (op === 'add') {
             const result = await fsAdd(env, collection, data || {});
+            await invalidateListCache(collection);
 
             // نوتیفیکیشن: پیام جدید در ترد گفتگوی ویراستار - فقط وقتی فرستنده صاحب ترد نباشه
             const fsParts = String(collection).split('/').filter(Boolean);
@@ -904,6 +925,90 @@ async function handleDownloadProxy(request, env) {
     headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
     headers.set('Cache-Control', 'private, max-age=0');
     return new Response(upstream.body, { status: 200, headers });
+}
+
+// آپلود فایل بزرگ به Cloudflare R2 - فقط ادمین. فایل به‌صورت خام (نه base64) فرستاده
+// میشه تا حجمش مصنوعی ۳۳٪ بزرگ‌تر نشه و به سقف ۱۰۰ مگابایتی Workers نخوریم.
+async function handleR2Upload(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+    if (!env.FILES) return jsonRes({ error: 'فضای ذخیره‌سازی (R2) متصل نیست' }, 500);
+
+    const url = new URL(request.url);
+    const fileName = url.searchParams.get('name') || 'file';
+    const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
+    const contentLength = Number(request.headers.get('Content-Length') || 0);
+    if (contentLength && contentLength > 95 * 1024 * 1024) {
+        return jsonRes({ error: 'حجم فایل نباید بیشتر از ۹۵ مگابایت باشد' }, 413);
+    }
+
+    const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-100);
+    const key = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
+
+    try {
+        await env.FILES.put(key, request.body, { httpMetadata: { contentType } });
+    } catch (e) {
+        return jsonRes({ error: 'آپلود ناموفق بود: ' + (e.message || '') }, 500);
+    }
+
+    const origin = new URL(request.url).origin;
+    return jsonRes({
+        url: `${origin}/r2-file?key=${encodeURIComponent(key)}&name=${encodeURIComponent(safeName)}`
+    });
+}
+
+// سرو کردن فایل از R2 با هدر Content-Disposition تا دانلود واقعی اتفاق بیفته
+async function handleR2File(request, env) {
+    if (!env.FILES) return jsonRes({ error: 'فضای ذخیره‌سازی (R2) متصل نیست' }, 500);
+    const url = new URL(request.url);
+    const key = url.searchParams.get('key');
+    const name = url.searchParams.get('name') || 'file';
+    if (!key) return jsonRes({ error: 'شناسه‌ی فایل مشخص نشده' }, 400);
+
+    const obj = await env.FILES.get(key);
+    if (!obj) return jsonRes({ error: 'فایل یافت نشد' }, 404);
+
+    const headers = new Headers();
+    headers.set('Content-Type', obj.httpMetadata?.contentType || 'application/octet-stream');
+    headers.set('Content-Disposition', `attachment; filename="${String(name).replace(/["\r\n]/g, '')}"`);
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return new Response(obj.body, { status: 200, headers });
+}
+
+async function hmacSha1Base64(secret, message) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+    return btoa(String.fromCharCode(...new Uint8Array(sig)));
+}
+
+// یه لینک آپلود موقت و امضاشده برای فضای ابری آروان می‌سازه (روش S3 سازگار، امضای
+// نسخه‌ی ۲ که خودِ مستندات آروان براش مثال داده). فایل مستقیم از مرورگر به آروان
+// می‌ره، نه از Worker - پس محدودیت حجم Cloudflare اصلاً مطرح نیست. فقط ادمین.
+async function handleArvanPresign(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+    if (!env.ARVAN_ACCESS_KEY || !env.ARVAN_SECRET_KEY || !env.ARVAN_BUCKET) {
+        return jsonRes({ error: 'تنظیمات فضای ابری آروان کامل نیست (Access Key / Secret Key / Bucket)' }, 500);
+    }
+
+    const url = new URL(request.url);
+    const fileName = url.searchParams.get('name') || 'file';
+    const contentType = url.searchParams.get('contentType') || 'application/octet-stream';
+    const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-100);
+    const key = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
+    const expires = Math.floor(Date.now() / 1000) + 600; // ۱۰ دقیقه اعتبار
+
+    const endpoint = env.ARVAN_ENDPOINT || 's3.ir-thr-at1.arvanstorage.ir';
+    const bucket = env.ARVAN_BUCKET;
+    const resource = `/${bucket}/${key}`;
+    const stringToSign = `PUT\n\n${contentType}\n${expires}\n${resource}`;
+    const signature = await hmacSha1Base64(env.ARVAN_SECRET_KEY, stringToSign);
+
+    const uploadUrl = `https://${endpoint}${resource}?AWSAccessKeyId=${encodeURIComponent(env.ARVAN_ACCESS_KEY)}&Signature=${encodeURIComponent(signature)}&Expires=${expires}`;
+    const publicUrl = `https://${endpoint}${resource}`;
+
+    return jsonRes({ uploadUrl, publicUrl, contentType });
 }
 
 async function handleTelegramUpload(request, env) {

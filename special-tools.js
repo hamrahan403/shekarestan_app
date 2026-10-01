@@ -59,6 +59,11 @@
       <div class="st-item" onclick="ST.openLearnPlusMenu()">
         <span class="st-icon">➕</span><span class="st-label">آموزش پلاس+</span>
       </div>
+      ${isAdminUser() ? `
+      <div class="st-item" onclick="ST.openBigUpload()">
+        <span class="st-icon">📤</span><span class="st-label">آپلود فایل بزرگ (تا ۳۰۰ مگابایت)</span>
+      </div>
+      ` : ''}
     `;
   }
 
@@ -131,12 +136,85 @@
     showBack(renderMainMenu);
     menuRoot.innerHTML = `
       ${isAdminUser() ? '<button id="add-reference-btn" class="st-add-btn">➕ افزودن رفرنس جدید</button>' : ''}
+      <div id="add-reference-form-host"></div>
       <div id="references-list"><div class="st-loading">در حال بارگذاری...</div></div>
     `;
     if (isAdminUser()) {
-      document.getElementById('add-reference-btn').addEventListener('click', openAddReferenceFlow);
+      document.getElementById('add-reference-btn').addEventListener('click', () => {
+        document.getElementById('add-reference-btn').style.display = 'none';
+        renderAddReferenceForm(document.getElementById('add-reference-form-host'));
+      });
     }
     await renderReferencesList();
+  }
+
+  function renderAddReferenceForm(host) {
+    host.innerHTML = `
+      <div class="st-form-box">
+        <input type="text" id="ref-title-input" class="st-input" placeholder="عنوان رفرنس" />
+        <input type="text" id="ref-year-input" class="st-input" placeholder="سال (اختیاری)" inputmode="numeric" />
+        <div class="st-source-toggle">
+          <button type="button" id="ref-source-file" class="st-toggle-btn active">آپلود فایل</button>
+          <button type="button" id="ref-source-link" class="st-toggle-btn">لینک خارجی</button>
+        </div>
+        <input type="file" id="ref-file-input" class="st-input" accept=".pdf,.doc,.docx,image/*" />
+        <input type="text" id="ref-link-input" class="st-input hidden-block" placeholder="لینک خارجی رو اینجا بچسبون" />
+        <button id="ref-submit-btn" type="button" class="st-add-btn">ذخیره رفرنس</button>
+      </div>
+    `;
+
+    const fileBtn = host.querySelector('#ref-source-file');
+    const linkBtn = host.querySelector('#ref-source-link');
+    const fileInput = host.querySelector('#ref-file-input');
+    const linkInput = host.querySelector('#ref-link-input');
+    let sourceMode = 'file';
+
+    fileBtn.addEventListener('click', () => {
+      sourceMode = 'file';
+      fileBtn.classList.add('active');
+      linkBtn.classList.remove('active');
+      fileInput.classList.remove('hidden-block');
+      linkInput.classList.add('hidden-block');
+    });
+    linkBtn.addEventListener('click', () => {
+      sourceMode = 'link';
+      linkBtn.classList.add('active');
+      fileBtn.classList.remove('active');
+      linkInput.classList.remove('hidden-block');
+      fileInput.classList.add('hidden-block');
+    });
+
+    host.querySelector('#ref-submit-btn').addEventListener('click', async () => {
+      const title = host.querySelector('#ref-title-input').value.trim();
+      const year = host.querySelector('#ref-year-input').value.trim();
+      if (!title) { showToast('⚠️ عنوان رو وارد کن'); return; }
+
+      const submitBtn = host.querySelector('#ref-submit-btn');
+      submitBtn.disabled = true;
+      try {
+        let url;
+        if (sourceMode === 'link') {
+          url = linkInput.value.trim();
+          if (!url) { showToast('⚠️ لینک رو وارد کن'); submitBtn.disabled = false; return; }
+        } else {
+          const file = fileInput.files[0];
+          if (!file) { showToast('⚠️ یه فایل انتخاب کن'); submitBtn.disabled = false; return; }
+          showToast('⏳ در حال آپلود...');
+          url = await uploadToArvan(file);
+        }
+
+        await apiFs('add', 'references', { data: { title, year: year || null, url, createdAtMs: Date.now() } });
+        showToast('✅ رفرنس اضافه شد');
+        host.innerHTML = '';
+        const addBtn = document.getElementById('add-reference-btn');
+        if (addBtn) addBtn.style.display = 'block';
+        await renderReferencesList();
+      } catch (e) {
+        showToast('⚠️ خطا: ' + (e.message || ''));
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
   }
 
   async function renderReferencesList() {
@@ -151,7 +229,9 @@
       box.innerHTML = items.map((item) => `
         <div class="st-item">
           <span class="st-icon">📄</span>
-          <a class="st-label" href="${item.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">${escapeHtml(item.title || 'بدون عنوان')}</a>
+          <a class="st-label" href="${item.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">
+            ${escapeHtml(item.title || 'بدون عنوان')}${item.year ? ` <span style="color:var(--brown-light);font-size:0.75rem;">(${escapeHtml(String(item.year))})</span>` : ''}
+          </a>
           ${isAdminUser() ? `<button data-id="${item.id}" class="st-delete-btn">حذف</button>` : ''}
         </div>
       `).join('');
@@ -172,52 +252,77 @@
     }
   }
 
-  function openAddReferenceFlow() {
-    const title = prompt('عنوان رفرنس رو وارد کن:');
-    if (!title || !title.trim()) return;
+  // لینک امضاشده رو از Worker می‌گیره، بعد خودِ مرورگر مستقیم فایل رو به فضای ابری
+  // آروان می‌فرسته (نه از Worker رد میشه)، پس هیچ محدودیت حجمی از سمت ما وجود نداره.
+  async function uploadToArvan(file) {
+    const token = getSessionToken();
+    const contentType = file.type || 'application/octet-stream';
+    const presignRes = await fetch(
+      `/arvan-presign?name=${encodeURIComponent(file.name)}&contentType=${encodeURIComponent(contentType)}`,
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const presignData = await presignRes.json().catch(() => ({}));
+    if (!presignRes.ok || presignData.error) throw new Error(presignData.error || 'ساخت لینک آپلود ناموفق بود');
 
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.pdf,.doc,.docx,image/*';
-    fileInput.addEventListener('change', async () => {
+    const putRes = await fetch(presignData.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: file
+    });
+    if (!putRes.ok) throw new Error('آپلود به فضای ابری ناموفق بود (کد ' + putRes.status + ')');
+
+    return presignData.publicUrl;
+  }
+
+  // ---------- آپلود فایل بزرگ (تا ۳۰۰ مگابایت) - مستقیم به فضای ابری آروان ----------
+  function openBigUpload() {
+    showBack(renderMainMenu);
+    menuRoot.innerHTML = `
+      <div class="st-form-box">
+        <div style="color:var(--brown-light);font-size:0.75rem;line-height:1.7;">
+          فایلت رو اینجا آپلود کن تا یه لینک بگیری؛ اون لینک رو می‌تونی توی فرم افزودن جزوه/ویدیو، قسمت «لینک خارجی» بچسبونی. حداکثر حجم: ۳۰۰ مگابایت.
+        </div>
+        <input type="file" id="big-upload-file-input" class="st-input" />
+        <button id="big-upload-submit-btn" type="button" class="st-add-btn">آپلود کن</button>
+        <div id="big-upload-result"></div>
+      </div>
+    `;
+    document.getElementById('big-upload-submit-btn').addEventListener('click', async () => {
+      const fileInput = document.getElementById('big-upload-file-input');
       const file = fileInput.files[0];
-      if (!file) return;
-      if (file.size > 4.2 * 1024 * 1024) {
-        showToast('⚠️ حجم فایل نباید بیشتر از ۴ مگابایت باشد');
-        return;
-      }
-      showToast('⏳ در حال آپلود...');
+      const resultBox = document.getElementById('big-upload-result');
+      if (!file) { showToast('⚠️ یه فایل انتخاب کن'); return; }
+      if (file.size > 300 * 1024 * 1024) { showToast('⚠️ حجم فایل نباید بیشتر از ۳۰۰ مگابایت باشد'); return; }
+
+      const btn = document.getElementById('big-upload-submit-btn');
+      btn.disabled = true;
+      resultBox.innerHTML = '<div class="st-loading">در حال آپلود... (ممکنه برای فایل بزرگ کمی طول بکشه)</div>';
       try {
-        const fileBase64 = await fileToBase64(file);
-        const token = getSessionToken();
-        const res = await fetch('/telegram-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-          body: JSON.stringify({ fileBase64, fileName: file.name, mimeType: file.type })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.error) throw new Error(data.error || 'آپلود ناموفق بود');
+        const url = await uploadToArvan(file);
 
-        await apiFs('add', 'references', { data: { title: title.trim(), url: data.secure_url, createdAtMs: Date.now() } });
-        showToast('✅ رفرنس اضافه شد');
-        await renderReferencesList();
+        resultBox.innerHTML = `
+          <div style="margin-top:10px;">
+            <div style="color:var(--brown-light);font-size:0.75rem;margin-bottom:6px;">✅ آپلود شد، لینک رو کپی کن:</div>
+            <input type="text" readonly value="${url}" id="big-upload-link-output" class="st-input" onclick="this.select()" />
+            <button id="big-upload-copy-btn" type="button" class="st-toggle-btn" style="width:100%;margin-top:6px;">📋 کپی لینک</button>
+          </div>
+        `;
+        document.getElementById('big-upload-copy-btn').addEventListener('click', () => {
+          const input = document.getElementById('big-upload-link-output');
+          input.select();
+          navigator.clipboard?.writeText(input.value).then(() => showToast('✅ لینک کپی شد'));
+        });
+        showToast('✅ آپلود کامل شد');
       } catch (e) {
+        resultBox.innerHTML = '';
         showToast('⚠️ خطا: ' + (e.message || ''));
+      } finally {
+        btn.disabled = false;
       }
     });
-    fileInput.click();
   }
 
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  window.ST = { openLearnPlusMenu, openNeuro, openEpid, comingSoon, openReferences };
+  window.ST = { openLearnPlusMenu, openNeuro, openEpid, comingSoon, openReferences, openBigUpload };
 
   // ---------- اضافه‌کردن آیتم ناوبری، دقیقاً مثل بقیه (data-page + navigateTo) ----------
   function hookNavItem() {
