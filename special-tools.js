@@ -154,35 +154,36 @@
         <input type="text" id="ref-title-input" class="st-input" placeholder="عنوان رفرنس" />
         <input type="text" id="ref-year-input" class="st-input" placeholder="سال (اختیاری)" inputmode="numeric" />
         <div class="st-source-toggle">
-          <button type="button" id="ref-source-file" class="st-toggle-btn active">آپلود فایل</button>
+          <button type="button" id="ref-source-arvan" class="st-toggle-btn active">آروان</button>
+          <button type="button" id="ref-source-telegram" class="st-toggle-btn">تلگرام</button>
           <button type="button" id="ref-source-link" class="st-toggle-btn">لینک خارجی</button>
         </div>
         <input type="file" id="ref-file-input" class="st-input" accept=".pdf,.doc,.docx,image/*" />
+        <div id="ref-telegram-hint" class="hidden-block" style="color:var(--brown-light);font-size:0.68rem;">سقف تلگرام ۴۵ مگابایته؛ برای حجم بیشتر، آروان رو انتخاب کن.</div>
         <input type="text" id="ref-link-input" class="st-input hidden-block" placeholder="لینک خارجی رو اینجا بچسبون" />
         <button id="ref-submit-btn" type="button" class="st-add-btn">ذخیره رفرنس</button>
       </div>
     `;
 
-    const fileBtn = host.querySelector('#ref-source-file');
+    const arvanBtn = host.querySelector('#ref-source-arvan');
+    const telegramBtn = host.querySelector('#ref-source-telegram');
     const linkBtn = host.querySelector('#ref-source-link');
     const fileInput = host.querySelector('#ref-file-input');
+    const telegramHint = host.querySelector('#ref-telegram-hint');
     const linkInput = host.querySelector('#ref-link-input');
-    let sourceMode = 'file';
+    let sourceMode = 'arvan';
 
-    fileBtn.addEventListener('click', () => {
-      sourceMode = 'file';
-      fileBtn.classList.add('active');
-      linkBtn.classList.remove('active');
-      fileInput.classList.remove('hidden-block');
-      linkInput.classList.add('hidden-block');
-    });
-    linkBtn.addEventListener('click', () => {
-      sourceMode = 'link';
-      linkBtn.classList.add('active');
-      fileBtn.classList.remove('active');
-      linkInput.classList.remove('hidden-block');
-      fileInput.classList.add('hidden-block');
-    });
+    function setMode(mode) {
+      sourceMode = mode;
+      [arvanBtn, telegramBtn, linkBtn].forEach((b) => b.classList.remove('active'));
+      ({ arvan: arvanBtn, telegram: telegramBtn, link: linkBtn })[mode].classList.add('active');
+      fileInput.classList.toggle('hidden-block', mode === 'link');
+      telegramHint.classList.toggle('hidden-block', mode !== 'telegram');
+      linkInput.classList.toggle('hidden-block', mode !== 'link');
+    }
+    arvanBtn.addEventListener('click', () => setMode('arvan'));
+    telegramBtn.addEventListener('click', () => setMode('telegram'));
+    linkBtn.addEventListener('click', () => setMode('link'));
 
     host.querySelector('#ref-submit-btn').addEventListener('click', async () => {
       const title = host.querySelector('#ref-title-input').value.trim();
@@ -200,7 +201,7 @@
           const file = fileInput.files[0];
           if (!file) { showToast('⚠️ یه فایل انتخاب کن'); submitBtn.disabled = false; return; }
           showToast('⏳ در حال آپلود...');
-          url = await uploadToArvan(file);
+          url = sourceMode === 'telegram' ? await uploadToTelegram(file) : await uploadToArvan(file);
         }
 
         await apiFs('add', 'references', { data: { title, year: year || null, url, createdAtMs: Date.now() } });
@@ -252,6 +253,47 @@
     }
   }
 
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // سقف واقعی تلگرام برای آپلود فایل توسط بات ۵۰ مگابایته؛ ۴۵ می‌ذاریم برای حاشیه‌ی امن.
+  const TELEGRAM_MAX_BYTES = 45 * 1024 * 1024;
+
+  async function uploadToTelegram(file) {
+    if (file.size > TELEGRAM_MAX_BYTES) {
+      throw new Error('حجم فایل برای تلگرام زیاده (حداکثر ۴۵ مگابایت) — آروان رو انتخاب کن');
+    }
+    const fileBase64 = await fileToBase64(file);
+    const token = getSessionToken();
+    const res = await fetch('/telegram-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ fileBase64, fileName: file.name, mimeType: file.type })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || 'آپلود به تلگرام ناموفق بود');
+    return data.secure_url;
+  }
+
+  // فرم‌های اصلی «افزودن جزوه» و «افزودن ویدیو» (توی index.html) برای گزینه‌ی
+  // «آپلود فایل» تابعی به اسم uploadToCloudinary رو صدا می‌زنن که هیچ‌جا تعریف نشده
+  // بود (از قبل خراب بود، نه کار ما) - همینجا تعریفش می‌کنیم و به آپلود آروان وصلش
+  // می‌کنیم، با همون شکل خروجی‌ای که اون فرم‌ها انتظار دارن (secure_url, bytes).
+  window.uploadToCloudinary = async function (file) {
+    let secure_url;
+    const wantsTelegram = file.size <= TELEGRAM_MAX_BYTES &&
+      confirm('برای آپلود این فایل در تلگرام «OK» رو بزن؛ برای آپلود در فضای ابری آروان «Cancel» رو بزن.');
+    if (wantsTelegram) secure_url = await uploadToTelegram(file);
+    else secure_url = await uploadToArvan(file);
+    return { secure_url, bytes: file.size };
+  };
+
   // لینک امضاشده رو از Worker می‌گیره، بعد خودِ مرورگر مستقیم فایل رو به فضای ابری
   // آروان می‌فرسته (نه از Worker رد میشه)، پس هیچ محدودیت حجمی از سمت ما وجود نداره.
   async function uploadToArvan(file) {
@@ -280,86 +322,32 @@
     menuRoot.innerHTML = `
       <div class="st-form-box">
         <div style="color:var(--brown-light);font-size:0.75rem;line-height:1.7;">
-          فایلت رو اینجا آپلود کن تا یه لینک بگیری؛ اون لینک رو می‌تونی توی فرم افزودن جزوه/ویدیو، قسمت «لینک خارجی» بچسبونی. حداکثر حجم: ۳۰۰ مگابایت.
+          فایلت رو اینجا آپلود کن تا یه لینک بگیری؛ اون لینک رو می‌تونی توی فرم افزودن جزوه/ویدیو، قسمت «لینک خارجی» بچسبونی.
+        </div>
+        <div class="st-source-toggle">
+          <button type="button" id="big-source-arvan" class="st-toggle-btn active">آروان (تا ۳۰۰ مگ)</button>
+          <button type="button" id="big-source-telegram" class="st-toggle-btn">تلگرام (تا ۴۵ مگ)</button>
         </div>
         <input type="file" id="big-upload-file-input" class="st-input" />
         <button id="big-upload-submit-btn" type="button" class="st-add-btn">آپلود کن</button>
         <div id="big-upload-result"></div>
       </div>
     `;
+    const bigArvanBtn = document.getElementById('big-source-arvan');
+    const bigTelegramBtn = document.getElementById('big-source-telegram');
+    let bigSourceMode = 'arvan';
+    bigArvanBtn.addEventListener('click', () => {
+      bigSourceMode = 'arvan';
+      bigArvanBtn.classList.add('active');
+      bigTelegramBtn.classList.remove('active');
+    });
+    bigTelegramBtn.addEventListener('click', () => {
+      bigSourceMode = 'telegram';
+      bigTelegramBtn.classList.add('active');
+      bigArvanBtn.classList.remove('active');
+    });
+
     document.getElementById('big-upload-submit-btn').addEventListener('click', async () => {
       const fileInput = document.getElementById('big-upload-file-input');
       const file = fileInput.files[0];
-      const resultBox = document.getElementById('big-upload-result');
-      if (!file) { showToast('⚠️ یه فایل انتخاب کن'); return; }
-      if (file.size > 300 * 1024 * 1024) { showToast('⚠️ حجم فایل نباید بیشتر از ۳۰۰ مگابایت باشد'); return; }
-
-      const btn = document.getElementById('big-upload-submit-btn');
-      btn.disabled = true;
-      resultBox.innerHTML = '<div class="st-loading">در حال آپلود... (ممکنه برای فایل بزرگ کمی طول بکشه)</div>';
-      try {
-        const url = await uploadToArvan(file);
-
-        resultBox.innerHTML = `
-          <div style="margin-top:10px;">
-            <div style="color:var(--brown-light);font-size:0.75rem;margin-bottom:6px;">✅ آپلود شد، لینک رو کپی کن:</div>
-            <input type="text" readonly value="${url}" id="big-upload-link-output" class="st-input" onclick="this.select()" />
-            <button id="big-upload-copy-btn" type="button" class="st-toggle-btn" style="width:100%;margin-top:6px;">📋 کپی لینک</button>
-          </div>
-        `;
-        document.getElementById('big-upload-copy-btn').addEventListener('click', () => {
-          const input = document.getElementById('big-upload-link-output');
-          input.select();
-          navigator.clipboard?.writeText(input.value).then(() => showToast('✅ لینک کپی شد'));
-        });
-        showToast('✅ آپلود کامل شد');
-      } catch (e) {
-        resultBox.innerHTML = '';
-        showToast('⚠️ خطا: ' + (e.message || ''));
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  }
-
-  window.ST = { openLearnPlusMenu, openNeuro, openEpid, comingSoon, openReferences, openBigUpload };
-
-  // ---------- اضافه‌کردن آیتم ناوبری، دقیقاً مثل بقیه (data-page + navigateTo) ----------
-  function hookNavItem() {
-    const learnBtn = document.getElementById('learnBtn');
-    if (learnBtn) learnBtn.style.display = 'none';
-
-    const nav = document.querySelector('.bottom-nav');
-    if (!nav || document.getElementById('st-nav-btn')) return;
-
-    const newBtn = document.createElement('button');
-    newBtn.className = 'nav-item';
-    newBtn.id = 'st-nav-btn';
-    newBtn.dataset.page = 'special-tools';
-    newBtn.innerHTML = '<span class="icon">☢️</span><span class="label">ابزار ویژه</span>';
-    newBtn.addEventListener('click', () => {
-      if (typeof pauseLearnMedia === 'function') pauseLearnMedia();
-      goToSpecialTools();
-    });
-    nav.appendChild(newBtn);
-
-    // navItems یه NodeList/آرایه‌ست که موقع لود اولیه ساخته شده؛ دکمه‌ی جدید رو هم بهش اضافه می‌کنیم
-    // تا navigateTo بتونه active/غیرفعال بودنش رو هم مثل بقیه مدیریت کنه.
-    if (typeof navItems !== 'undefined' && navItems && typeof navItems.push === 'function') {
-      navItems.push(newBtn);
-    } else if (typeof navItems !== 'undefined' && navItems && navItems.length !== undefined) {
-      // اگه NodeList واقعی (نه آرایه) بود، یه querySelectorAll تازه جایگزینش می‌کنیم
-      window.navItems = document.querySelectorAll('.bottom-nav .nav-item');
-    }
-  }
-
-  if (document.readyState !== 'loading') hookNavItem();
-  else document.addEventListener('DOMContentLoaded', hookNavItem);
-
-  // ---------- مخفی کردن دائمی بخش انگل‌شناسی (اگه جایی لینک مستقیم بهش باشه) ----------
-  const style = document.createElement('style');
-  style.textContent = `
-    #learn-tabs, #learn-para-list, #learn-para-step { display: none !important; }
-  `;
-  document.head.appendChild(style);
-})();
+      const resultBox = document.getElementById('big-up
