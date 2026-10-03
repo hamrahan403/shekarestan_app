@@ -44,6 +44,7 @@ export default {
             else if (p === '/r2-upload' && request.method === 'POST') response = await handleR2Upload(request, env);
             else if (p === '/r2-file' && request.method === 'GET') response = await handleR2File(request, env);
             else if (p === '/arvan-presign' && request.method === 'GET') response = await handleArvanPresign(request, env);
+            else if (p === '/api/admin/reset-app' && request.method === 'POST') response = await handleResetApp(request, env);
             else if (p === '/telegram-upload' && request.method === 'POST') response = await handleTelegramUpload(request, env);
             else if (p === '/telegram-file' && request.method === 'GET') response = await handleTelegramFileProxy(request, env);
             else if (p === '/api/auth/request-code' && request.method === 'POST') response = await handleRequestCode(request, env);
@@ -864,6 +865,40 @@ async function handleFsProxy(request, env) {
 // چون شناسه‌ی سطح بالاشون (task id، uid) از قبل معلوم نیست، شامل این مهاجرت خودکار
 // نمی‌شن؛ اگه لازم بود، بعداً برات یه نسخه‌ی مخصوص همون‌ها رو می‌نویسم.
 // =====================================================================
+// ریست یک‌بارمصرف قبل از انتشار عمومی: همه‌ی اعلان‌ها (D1) + همه‌ی کاربرها و
+// درخواست‌های عضویت در انتظار (Firestore) رو پاک می‌کنه. فقط ادمین. بعد از استفاده
+// می‌تونی این تابع و مسیرش رو از worker.js حذف کنی.
+async function handleResetApp(request, env) {
+    const session = await getSession(request, env);
+    if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
+
+    const results = {};
+
+    try {
+        const r1 = await env.DB.prepare(`DELETE FROM fs_documents WHERE collection = 'notifications'`).run();
+        const r2 = await env.DB.prepare(`DELETE FROM fs_documents WHERE collection LIKE 'notifDismissed%'`).run();
+        results.notifications = { ok: true, deleted: (r1.meta?.changes || 0) + (r2.meta?.changes || 0) };
+    } catch (e) {
+        results.notifications = { ok: false, error: e.message || String(e) };
+    }
+
+    for (const collection of ['users', 'pendingRequests']) {
+        try {
+            const items = await firestoreList(env, collection, {});
+            let count = 0;
+            for (const item of items) {
+                await firestoreDelete(env, `${collection}/${item.id}`);
+                count++;
+            }
+            results[collection] = { ok: true, deleted: count };
+        } catch (e) {
+            results[collection] = { ok: false, error: e.message || String(e) };
+        }
+    }
+
+    return jsonRes({ results });
+}
+
 async function handleMigrateToD1(request, env) {
     const session = await getSession(request, env);
     if (!session || !session.isAdmin) return jsonRes({ error: 'فقط ادمین' }, 403);
