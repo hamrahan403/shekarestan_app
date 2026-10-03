@@ -350,4 +350,80 @@
     document.getElementById('big-upload-submit-btn').addEventListener('click', async () => {
       const fileInput = document.getElementById('big-upload-file-input');
       const file = fileInput.files[0];
-      const resultBox = document.getElementById('big-up
+      const resultBox = document.getElementById('big-upload-result');
+      if (!file) { showToast('⚠️ یه فایل انتخاب کن'); return; }
+      const maxBytes = bigSourceMode === 'telegram' ? TELEGRAM_MAX_BYTES : 300 * 1024 * 1024;
+      if (file.size > maxBytes) {
+        showToast(`⚠️ حجم فایل برای ${bigSourceMode === 'telegram' ? 'تلگرام (۴۵ مگ)' : 'آروان (۳۰۰ مگ)'} زیاده`);
+        return;
+      }
+
+      const btn = document.getElementById('big-upload-submit-btn');
+      btn.disabled = true;
+      resultBox.innerHTML = '<div class="st-loading">در حال آپلود... (ممکنه برای فایل بزرگ کمی طول بکشه)</div>';
+      try {
+        const url = bigSourceMode === 'telegram' ? await uploadToTelegram(file) : await uploadToArvan(file);
+
+        resultBox.innerHTML = `
+          <div style="margin-top:10px;">
+            <div style="color:var(--brown-light);font-size:0.75rem;margin-bottom:6px;">✅ آپلود شد، لینک رو کپی کن:</div>
+            <input type="text" readonly value="${url}" id="big-upload-link-output" class="st-input" onclick="this.select()" />
+            <button id="big-upload-copy-btn" type="button" class="st-toggle-btn" style="width:100%;margin-top:6px;">📋 کپی لینک</button>
+          </div>
+        `;
+        document.getElementById('big-upload-copy-btn').addEventListener('click', () => {
+          const input = document.getElementById('big-upload-link-output');
+          input.select();
+          navigator.clipboard?.writeText(input.value).then(() => showToast('✅ لینک کپی شد'));
+        });
+        showToast('✅ آپلود کامل شد');
+      } catch (e) {
+        resultBox.innerHTML = '';
+        showToast('⚠️ خطا: ' + (e.message || ''));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  window.ST = { openLearnPlusMenu, openNeuro, openEpid, comingSoon, openReferences, openBigUpload };
+
+  // ---------- اضافه‌کردن آیتم ناوبری، دقیقاً مثل بقیه (data-page + navigateTo) ----------
+  function hookNavItem() {
+    const learnBtn = document.getElementById('learnBtn');
+    if (learnBtn) learnBtn.style.display = 'none';
+
+    const nav = document.querySelector('.bottom-nav');
+    if (!nav || document.getElementById('st-nav-btn')) return;
+
+    const newBtn = document.createElement('button');
+    newBtn.className = 'nav-item';
+    newBtn.id = 'st-nav-btn';
+    newBtn.dataset.page = 'special-tools';
+    newBtn.innerHTML = '<span class="icon">☢️</span><span class="label">ابزار ویژه</span>';
+    newBtn.addEventListener('click', () => {
+      if (typeof pauseLearnMedia === 'function') pauseLearnMedia();
+      goToSpecialTools();
+    });
+    nav.appendChild(newBtn);
+
+    // navItems یه NodeList/آرایه‌ست که موقع لود اولیه ساخته شده؛ دکمه‌ی جدید رو هم بهش اضافه می‌کنیم
+    // تا navigateTo بتونه active/غیرفعال بودنش رو هم مثل بقیه مدیریت کنه.
+    if (typeof navItems !== 'undefined' && navItems && typeof navItems.push === 'function') {
+      navItems.push(newBtn);
+    } else if (typeof navItems !== 'undefined' && navItems && navItems.length !== undefined) {
+      // اگه NodeList واقعی (نه آرایه) بود، یه querySelectorAll تازه جایگزینش می‌کنیم
+      window.navItems = document.querySelectorAll('.bottom-nav .nav-item');
+    }
+  }
+
+  if (document.readyState !== 'loading') hookNavItem();
+  else document.addEventListener('DOMContentLoaded', hookNavItem);
+
+  // ---------- مخفی کردن دائمی بخش انگل‌شناسی (اگه جایی لینک مستقیم بهش باشه) ----------
+  const style = document.createElement('style');
+  style.textContent = `
+    #learn-tabs, #learn-para-list, #learn-para-step { display: none !important; }
+  `;
+  document.head.appendChild(style);
+})();
